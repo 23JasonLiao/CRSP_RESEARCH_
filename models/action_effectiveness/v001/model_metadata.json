@@ -1,0 +1,254 @@
+{
+  "models": {
+    "3": {
+      "dataset": "data\\derived\\prediction\\part6_prediction_dataset_trailing3y_future12m.csv",
+      "horizon_years": 3,
+      "target": "label_positive_excess_12m",
+      "numeric_features": [
+        "current_mret",
+        "current_sp500_ret",
+        "current_excess_ret",
+        "current_net_flow",
+        "current_mtna",
+        "current_exp_ratio",
+        "current_mgmt_fee",
+        "current_turn_ratio",
+        "current_age",
+        "current_tenure",
+        "fund_trailing_period_return",
+        "fund_trailing_max_drawdown",
+        "fund_trailing_beta_vs_sp500",
+        "trailing_avg_net_flow",
+        "trailing_sum_net_flow",
+        "trailing_avg_mtna",
+        "trailing_avg_exp_ratio",
+        "trailing_avg_mgmt_fee",
+        "trailing_avg_turn_ratio",
+        "trailing_avg_age",
+        "trailing_avg_tenure",
+        "yield10y",
+        "stock_allocation",
+        "bond_allocation",
+        "cash_allocation",
+        "portfolio_beta",
+        "technology_exposure",
+        "bond_money_exposure",
+        "indirect_equity_exposure",
+        "company_equity_exposure_proxy",
+        "top_holding_concentration",
+        "delta_stock",
+        "delta_beta",
+        "delta_technology",
+        "delta_bond_money",
+        "delta_indirect_equity",
+        "style_deviation_score",
+        "rolling_style_deviation_score",
+        "action_strength",
+        "manager_reliability_score",
+        "manager_defensive_score",
+        "manager_flow_score",
+        "manager_growth_tilt_score",
+        "holding_row_count",
+        "beta_matched_holding_count",
+        "non_individual_matched_holding_count"
+      ],
+      "splits": {
+        "train": 4209,
+        "valid": 2044,
+        "test": 1747
+      },
+      "models": {
+        "lightgbm": {
+          "path": "models\\action_effectiveness\\v001\\lightgbm_action_model_trailing3y.pkl",
+          "metrics": {
+            "train": {
+              "rows": 4209,
+              "positive_rate": 0.5260156806842481,
+              "auc": 0.8130165069403409,
+              "average_precision": 0.8056357216460509,
+              "accuracy": 0.7350914706581135,
+              "balanced_accuracy": 0.7347070250151123,
+              "f1": 0.7466484889797773
+            },
+            "valid": {
+              "rows": 2044,
+              "positive_rate": 0.4828767123287671,
+              "auc": 0.741563696071637,
+              "average_precision": 0.7136967111521587,
+              "accuracy": 0.6306262230919765,
+              "balanced_accuracy": 0.6206143440890517,
+              "f1": 0.46186742694226657
+            },
+            "test": {
+              "rows": 1747,
+              "positive_rate": 0.45735546651402403,
+              "auc": 0.3915020357725638,
+              "average_precision": 0.4346327299079148,
+              "accuracy": 0.35145964510589583,
+              "balanced_accuracy": 0.35492017976056567,
+              "f1": 0.35807365439093486
+            }
+          }
+        },
+        "xgboost": {
+          "path": "models\\action_effectiveness\\v001\\xgboost_action_model_trailing3y.pkl",
+          "metrics": {
+            "train": {
+              "rows": 4209,
+              "positive_rate": 0.5260156806842481,
+              "auc": 0.9437421466946498,
+              "average_precision": 0.9481202317682733,
+              "accuracy": 0.8591114278926111,
+              "balanced_accuracy": 0.8582951280640626,
+              "f1": 0.8671297333632086
+            },
+            "valid": {
+              "rows": 2044,
+              "positive_rate": 0.4828767123287671,
+              "auc": 0.6739103137380076,
+              "average_precision": 0.674683350046088,
+              "accuracy": 0.5998043052837574,
+              "balanced_accuracy": 0.5874245992605863,
+              "f1": 0.3528481012658228
+            },
+            "test": {
+              "rows": 1747,
+              "positive_rate": 0.45735546651402403,
+              "auc": 0.3573771011232395,
+              "average_precision": 0.3903017936654227,
+              "accuracy": 0.34688036634230107,
+              "balanced_accuracy": 0.3487336491289217,
+              "f1": 0.34160415464512406
+            }
+          }
+        }
+      },
+      "shap_background_sample": "models\\action_effectiveness\\v001\\shap_background_sample_trailing3y.csv"
+    },
+    "5": {
+      "dataset": "data\\derived\\prediction\\part6_prediction_dataset_trailing5y_future12m.csv",
+      "horizon_years": 5,
+      "target": "label_positive_excess_12m",
+      "numeric_features": [
+        "current_mret",
+        "current_sp500_ret",
+        "current_excess_ret",
+        "current_net_flow",
+        "current_mtna",
+        "current_exp_ratio",
+        "current_mgmt_fee",
+        "current_turn_ratio",
+        "current_age",
+        "current_tenure",
+        "fund_trailing_period_return",
+        "fund_trailing_max_drawdown",
+        "fund_trailing_beta_vs_sp500",
+        "trailing_avg_net_flow",
+        "trailing_sum_net_flow",
+        "trailing_avg_mtna",
+        "trailing_avg_exp_ratio",
+        "trailing_avg_mgmt_fee",
+        "trailing_avg_turn_ratio",
+        "trailing_avg_age",
+        "trailing_avg_tenure",
+        "yield10y",
+        "stock_allocation",
+        "bond_allocation",
+        "cash_allocation",
+        "portfolio_beta",
+        "technology_exposure",
+        "bond_money_exposure",
+        "indirect_equity_exposure",
+        "company_equity_exposure_proxy",
+        "top_holding_concentration",
+        "delta_stock",
+        "delta_beta",
+        "delta_technology",
+        "delta_bond_money",
+        "delta_indirect_equity",
+        "style_deviation_score",
+        "rolling_style_deviation_score",
+        "action_strength",
+        "manager_reliability_score",
+        "manager_defensive_score",
+        "manager_flow_score",
+        "manager_growth_tilt_score",
+        "holding_row_count",
+        "beta_matched_holding_count",
+        "non_individual_matched_holding_count"
+      ],
+      "splits": {
+        "train": 4209,
+        "valid": 2044,
+        "test": 1747
+      },
+      "models": {
+        "lightgbm": {
+          "path": "models\\action_effectiveness\\v001\\lightgbm_action_model_trailing5y.pkl",
+          "metrics": {
+            "train": {
+              "rows": 4209,
+              "positive_rate": 0.5260156806842481,
+              "auc": 0.8050965263203175,
+              "average_precision": 0.81116240464059,
+              "accuracy": 0.729864575908767,
+              "balanced_accuracy": 0.7304079983155721,
+              "f1": 0.7371098265895953
+            },
+            "valid": {
+              "rows": 2044,
+              "positive_rate": 0.4828767123287671,
+              "auc": 0.7978105149344505,
+              "average_precision": 0.75027293254959,
+              "accuracy": 0.7338551859099804,
+              "balanced_accuracy": 0.7367298053503493,
+              "f1": 0.7486136783733827
+            },
+            "test": {
+              "rows": 1747,
+              "positive_rate": 0.45735546651402403,
+              "auc": 0.3818208942612865,
+              "average_precision": 0.4367767184379019,
+              "accuracy": 0.3325701202060675,
+              "balanced_accuracy": 0.3327940252319619,
+              "f1": 0.31492361927144535
+            }
+          }
+        },
+        "xgboost": {
+          "path": "models\\action_effectiveness\\v001\\xgboost_action_model_trailing5y.pkl",
+          "metrics": {
+            "train": {
+              "rows": 4209,
+              "positive_rate": 0.5260156806842481,
+              "auc": 0.9392956193555251,
+              "average_precision": 0.9431262100990196,
+              "accuracy": 0.855072463768116,
+              "balanced_accuracy": 0.8544559230053453,
+              "f1": 0.8627980206927576
+            },
+            "valid": {
+              "rows": 2044,
+              "positive_rate": 0.4828767123287671,
+              "auc": 0.7250414326643719,
+              "average_precision": 0.7061544273286443,
+              "accuracy": 0.6340508806262231,
+              "balanced_accuracy": 0.6240597972315599,
+              "f1": 0.4672364672364672
+            },
+            "test": {
+              "rows": 1747,
+              "positive_rate": 0.45735546651402403,
+              "auc": 0.3755274261603376,
+              "average_precision": 0.40311196287259876,
+              "accuracy": 0.37779049799656556,
+              "balanced_accuracy": 0.3755426086405475,
+              "f1": 0.339209726443769
+            }
+          }
+        }
+      },
+      "shap_background_sample": "models\\action_effectiveness\\v001\\shap_background_sample_trailing5y.csv"
+    }
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "numeric": "median imputation; logistic model additionally standardizes numeric features",
+  "categorical": "not used in fast demo script",
+  "target": "label_positive_excess_12m"
+}
