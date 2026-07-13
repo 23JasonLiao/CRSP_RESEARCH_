@@ -1,12 +1,11 @@
-#**系統框架**
-'''
-系統框架
+# 專案架構 (Project Structure)
+
+```text
 your_project/
 │
 ├── main.py
 ├── api_server.py
 ├── requirements.txt
-├── README.md
 │
 ├── static/
 │   ├── index.html
@@ -14,25 +13,16 @@ your_project/
 │   └── style.css
 │
 ├── data/
-│   │
 │   ├── crsp/
 │   │   ├── fund_level/
 │   │   │   ├── balanced_before2010.csv
 │   │   │   └── balanced_after2010.csv
 │   │   │
-│   │   ├── holdings_raw/
-│   │   │   ├── stock berfore 2010_new___.csv
-│   │   │   ├── stock between 2010_2014_new___.csv
-│   │   │   ├── stock between 2015_2019_new___.csv
-│   │   │   └── stock between 2020_2026_new___.csv
-│   │   │
-│   │   └── sql/
-│   │       ├── crsp_before2010.sql
-│   │       ├── crsp_after2010.sql
-│   │       ├── stock before 2010_new__.sql
-│   │       ├── stock between 2010_2014_new__.sql
-│   │       ├── stock between 2015_2019_new__.sql
-│   │       └── stock between 2020_2026_new__.sql
+│   │   └── holdings_raw/
+│   │       ├── stock berfore 2010_new___.csv
+│   │       ├── stock between 2010_2014_new___.csv
+│   │       ├── stock between 2015_2019_new___.csv
+│   │       └── stock between 2020_2026_new___.csv
 │   │
 │   ├── market/
 │   │   ├── sp500_monthly_returns_1871_2026.csv
@@ -53,65 +43,58 @@ your_project/
 │   │   ├── part5_excluded_two_group_active_year_panel.csv
 │   │   └── part5_excluded_individual_stock_like_removed_audit.csv
 │   │
-│   ├── prediction(*)/
-│   │   ├── manager_action_ground_truth_table.csv
-│   │   ├── part6_prediction_dataset.csv
-│   │   ├── part6_prediction_results.csv
-│   │   ├── part6_feature_importance.csv
-│   │   └── part6_decile_backtest.csv
-│   │
-│   ├── external_docs(*)/
-│   │   ├── fund_reports/
-│   │   ├── market_news/
-│   │   ├── fomc/
-│   │   └── manager_commentary/
-│   │
-│   └── rag_chunks(*)/
-│       ├── chunks.jsonl
-│       ├── embeddings.parquet
-│       └── metadata.csv
+│   └── derived/
+│       ├── manager_action_groundtruth/
+│       │   ├── manager_action_ground_truth.csv
+│       │   ├── manager_action_ground_truth_trailing3y_future12m.csv
+│       │   ├── manager_action_ground_truth_trailing5y_future12m.csv
+│       │   ├── manager_action_ground_truth_audit.json
+│       │   ├── manager_action_ground_truth_schema.json
+│       │   └── manager_action_ground_truth_data_dictionary.md
+│       │
+│       └── prediction/
+│           ├── part6_prediction_dataset.csv
+│           ├── part6_prediction_dataset_trailing3y_future12m.csv
+│           └── part6_prediction_dataset_trailing5y_future12m.csv
 │
 ├── scripts/
-│   │
 │   ├── preprocessing/
-│   │   ├── extract_company_stocks_for_beta copy.py
+│   │   ├── extract_company_stocks_for_beta.py
 │   │   ├── calculate_yearly_trailing_beta_for_part5_with_sector.py
 │   │   └── preprocess_part5_excluded_two_groups.py
 │   │
-│   ├── modeling(*)/
-│   │   ├── build_manager_action_ground_truth.py
-│   │   ├── train_action_effectiveness_model.py
-│   │   ├── predict_selected_visual_state.py
-│   │   ├── compute_shap_explanations.py
-│   │   └── build_decile_backtest.py
-│   │
-│   └── rag(*)/
-│       ├── build_rag_chunks.py
-│       ├── embed_rag_chunks.py
-│       └── retrieve_context.py
+│   └── modeling/
+│       ├── build_manager_action_groundtruth_complete.py
+│       └── train_action_effectiveness_model.py
 │
-├── backend(*)/
+├── backend/
 │   ├── __init__.py
 │   ├── feature_builder.py
 │   ├── prediction_service.py
 │   ├── shap_service.py
-│   ├── rag_service.py
-│   └── llm_service.py
+│   └── shap.py
 │
-├── models(*)/
-│   ├── lightgbm_action_model.pkl
-│   ├── feature_columns.json
-│   └── model_metadata.json
+├── models/
+│   └── action_effectiveness/
+│       └── v001/
+│           ├── lightgbm_action_model.pkl
+│           ├── xgboost_action_model.pkl
+│           ├── lightgbm_action_model_trailing3y.pkl
+│           ├── xgboost_action_model_trailing3y.pkl
+│           ├── shap_background_sample_trailing3y.csv
+│           ├── lightgbm_action_model_trailing5y.pkl
+│           ├── xgboost_action_model_trailing5y.pkl
+│           ├── shap_background_sample_trailing5y.csv
+│           ├── feature_columns.json
+│           ├── preprocessing_config.json
+│           └── model_metadata.json
 │
-├── outputs(*)/
-│   ├── backend_payloads/
-│   ├── prediction_runs/
-│   ├── shap_outputs/
-│   ├── llm_explanations/
-│   └── figures/
-│
-└── notebooks(*)/
-    ├── data_check_part5a.ipynb
-    ├── data_check_part5b.ipynb
-    └── model_experiments.ipynb
-'''
+└── outputs/
+    └── backend_payloads/
+        ├── visual_state_latest.json
+        ├── part1_latest.json
+        ├── part2_latest.json
+        ├── part3_latest.json
+        ├── part4_latest.json
+        ├── part5_latest.json
+        └── backend_ml_latest.json
