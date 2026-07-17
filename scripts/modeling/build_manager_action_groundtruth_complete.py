@@ -2,13 +2,13 @@
 """
 Build/enrich manager-action ground truth and ML-ready datasets for the Balanced Fund VA project.
 
-This v2 script is intentionally designed to be compatible with your current frontend:
+This script builds the multi-horizon event ground truth used by Part 6:
 - app.js keeps Part1-Part5 unchanged.
 - The backend/offline pipeline reads the existing base manager_action_ground_truth.csv
   plus the original fund-level CSV files.
-- It creates two horizon-specific datasets:
-    1) 3-year trailing features -> predict future 12-month outcome
-    2) 5-year trailing features -> predict future 12-month outcome
+- It uses a three-year, strictly ex-ante style window.
+- Every event receives 3M, 6M, 9M and 12M forward excess-return targets.
+- Direction labels use a +/-0.5% neutral band and a five-level outcome label.
 - It keeps trailing features and also adds current-month features.
 - It adds rolling ex-ante style deviation using only manager history before report_date.
 
@@ -17,10 +17,8 @@ Recommended command in your project:
 
 Main outputs:
     data/derived/manager_action_groundtruth/manager_action_ground_truth.csv
-    data/derived/manager_action_groundtruth/manager_action_ground_truth_trailing3y_future12m.csv
-    data/derived/manager_action_groundtruth/manager_action_ground_truth_trailing5y_future12m.csv
-    data/derived/prediction/part6_prediction_dataset_trailing3y_future12m.csv
-    data/derived/prediction/part6_prediction_dataset_trailing5y_future12m.csv
+    data/derived/manager_action_groundtruth/manager_action_ground_truth_trailing3y_multi_horizon.csv
+    data/derived/prediction/part6_prediction_dataset_trailing3y_multi_horizon.csv
     data/derived/prediction/part6_prediction_dataset.csv
 
 Important thesis wording:
@@ -43,8 +41,9 @@ import pandas as pd
 
 DEFAULT_DATA_ROOT = Path("data")
 RISK_FREE_RATE = 0.01
-TRAILING_WINDOWS = {3: 36, 5: 60}
-FUTURE_MONTHS = 12
+TRAILING_WINDOWS = {3: 36}
+PREDICTION_HORIZONS = (3, 6, 9, 12)
+NEUTRAL_BAND = 0.005
 MIN_WINDOW_RATIO = 0.70
 
 FUND_FILES = [
@@ -56,11 +55,20 @@ BASE_GT_FILES = [
     "derived/manager_action_groundtruth/manager_action_ground_truth.csv",
     "manager_action_ground_truth.csv",
 ]
+HOLDINGS_GLOBS = ["crsp/holdings_raw/*.csv", "holdings_raw/*.csv"]
+SECTOR_CACHE_FILES = ["part5_equity_beta/part5_yfinance_sector_cache.csv"]
+GICS_SECTORS = (
+    "energy", "materials", "industrials", "consumer_discretionary", "consumer_staples",
+    "health_care", "financials", "information_technology", "communication_services",
+    "utilities", "real_estate",
+)
 
 IDENTITY_COLUMNS = [
     "event_id", "training_window_years", "training_window_months", "manager", "fund",
     "crsp_portno", "crsp_fundno", "fund_ticker", "mgmt_name", "report_date",
     "year", "quarter", "month_key", "feature_cutoff_date", "label_start_date", "label_end_date",
+    "style_window_start_date", "style_window_end_date", "style_window_type", "style_obs_count",
+    "leakage_check_passed",
 ]
 
 CURRENT_COLUMNS = [
@@ -82,19 +90,25 @@ ACTION_EXPOSURE_COLUMNS = [
     "bond_allocation", "cash_allocation", "portfolio_beta", "technology_exposure",
     "bond_money_exposure", "indirect_equity_exposure", "company_equity_exposure_proxy",
     "top_holding_concentration", "delta_stock", "delta_beta", "delta_technology",
-    "delta_bond_money", "delta_indirect_equity", "style_deviation_score",
-    "rolling_style_deviation_score", "action_strength", "action_type",
+    "delta_bond_money", "delta_indirect_equity", "nonstock_total_exposure",
+    "delta_nonstock_total_exposure", "delta_sector_exposure", "style_deviation_score",
+    "rolling_style_deviation_score", "rolling_sector_deviation_score",
+    "rolling_cross_asset_deviation_score", "rolling_action_deviation_score", "action_strength", "action_type",
     "cross_asset_execution_type", "manager_reliability_score", "manager_defensive_score",
     "manager_flow_score", "manager_growth_tilt_score", "allocation_completion_method",
     "non_individual_source", "holding_row_count", "beta_matched_holding_count",
     "non_individual_matched_holding_count", "data_quality_flags",
-]
+] + [f"sector_{s}_exposure" for s in GICS_SECTORS] + [f"delta_sector_{s}" for s in GICS_SECTORS] + ["sector_rotation_intensity"]
 
 FUTURE_COLUMNS = [
-    "future_12m_return", "future_12m_sp500_return", "future_12m_excess_return",
-    "future_drawdown", "future_positive_excess", "future_top_quartile",
-    "future_return_quantile", "label_positive_excess_12m", "label_positive_excess_4q",
-    "label_downside_control_12m", "label_joint_good_12m", "outcome_label",
+    item
+    for horizon in PREDICTION_HORIZONS
+    for item in (
+        f"future_{horizon}m_return", f"future_{horizon}m_sp500_return",
+        f"future_{horizon}m_excess_return", f"future_{horizon}m_drawdown",
+        f"direction_label_{horizon}m", f"outcome_5class_{horizon}m",
+        f"label_positive_excess_{horizon}m",
+    )
 ]
 
 ML_NUMERIC_COLUMNS = CURRENT_COLUMNS + TRAILING_ALIAS_COLUMNS + [
@@ -102,26 +116,32 @@ ML_NUMERIC_COLUMNS = CURRENT_COLUMNS + TRAILING_ALIAS_COLUMNS + [
     "technology_exposure", "bond_money_exposure", "indirect_equity_exposure",
     "company_equity_exposure_proxy", "top_holding_concentration", "delta_stock",
     "delta_beta", "delta_technology", "delta_bond_money", "delta_indirect_equity",
-    "style_deviation_score", "rolling_style_deviation_score", "action_strength",
+    "nonstock_total_exposure", "delta_nonstock_total_exposure", "delta_sector_exposure",
+    "style_deviation_score", "rolling_style_deviation_score", "rolling_sector_deviation_score",
+    "rolling_cross_asset_deviation_score", "rolling_action_deviation_score", "action_strength",
     "manager_reliability_score", "manager_defensive_score", "manager_flow_score",
     "manager_growth_tilt_score", "holding_row_count", "beta_matched_holding_count",
-    "non_individual_matched_holding_count",
-]
+    "non_individual_matched_holding_count", "sector_rotation_intensity",
+] + [f"sector_{s}_exposure" for s in GICS_SECTORS] + [f"delta_sector_{s}" for s in GICS_SECTORS]
 
 ML_CATEGORICAL_COLUMNS = [
     "market_regime", "manager_style_group", "action_type", "cross_asset_execution_type",
     "allocation_completion_method", "non_individual_source",
 ]
 
-TARGET_COLUMNS = [
-    "label_positive_excess_12m", "label_positive_excess_4q", "label_downside_control_12m",
-    "label_joint_good_12m", "future_12m_excess_return", "future_drawdown",
-]
+TARGET_COLUMNS = FUTURE_COLUMNS
 
-STYLE_DEVIATION_FEATURES = [
+SECTOR_STYLE_FEATURES = [f"sector_{s}_exposure" for s in GICS_SECTORS]
+CROSS_ASSET_STYLE_FEATURES = [
     "stock_allocation", "portfolio_beta", "technology_exposure",
     "bond_money_exposure", "indirect_equity_exposure",
+    "nonstock_total_exposure",
 ]
+STYLE_DEVIATION_FEATURES = CROSS_ASSET_STYLE_FEATURES + SECTOR_STYLE_FEATURES
+ACTION_DEVIATION_FEATURES = [
+    "delta_stock", "delta_beta", "delta_technology", "delta_bond_money",
+    "delta_indirect_equity", "delta_nonstock_total_exposure", "delta_sector_exposure",
+] + [f"delta_sector_{s}" for s in GICS_SECTORS]
 
 
 def find_file(root: Path, candidates: Sequence[str]) -> Optional[Path]:
@@ -366,6 +386,89 @@ def add_portfolio_rolling_features(pm: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(parts, ignore_index=True)
 
 
+def load_sector_exposure_panel(root: Path) -> pd.DataFrame:
+    """Build report-level 11-sector weights and observed weight changes.
+
+    The deltas are deliberately named observed sector deltas.  A fully drift-adjusted
+    active delta requires security total returns between reports and must not be
+    inferred from weights alone.
+    """
+    cache_path = find_file(root, SECTOR_CACHE_FILES)
+    if cache_path is None:
+        return pd.DataFrame(columns=["crsp_portno", "report_date"])
+    cache = pd.read_csv(cache_path, low_memory=False)
+    ticker_col = "holding_ticker" if "holding_ticker" in cache else "yahoo_ticker"
+    cache["ticker_key"] = cache[ticker_col].astype(str).str.upper().str.strip()
+    sector_map = cache.drop_duplicates("ticker_key").set_index("ticker_key")["sector"].astype(str).to_dict()
+    normalization = {
+        "Energy": "energy", "Basic Materials": "materials", "Materials": "materials",
+        "Industrials": "industrials", "Consumer Cyclical": "consumer_discretionary",
+        "Consumer Discretionary": "consumer_discretionary", "Consumer Defensive": "consumer_staples",
+        "Consumer Staples": "consumer_staples", "Healthcare": "health_care", "Health Care": "health_care",
+        "Financial Services": "financials", "Financials": "financials", "Technology": "information_technology",
+        "Information Technology": "information_technology", "Communication Services": "communication_services",
+        "Utilities": "utilities", "Real Estate": "real_estate",
+    }
+    paths: list[Path] = []
+    for pattern in HOLDINGS_GLOBS:
+        paths.extend(root.glob(pattern))
+    frames = []
+    for path in sorted(set(paths)):
+        frame = pd.read_csv(path, usecols=["crsp_portno", "report_dt", "holding_ticker", "holding_percent_tna"], low_memory=False)
+        frame["ticker_key"] = frame["holding_ticker"].astype(str).str.upper().str.strip()
+        frame["sector_key"] = frame["ticker_key"].map(sector_map).map(normalization)
+        frame["weight"] = pd.to_numeric(frame["holding_percent_tna"], errors="coerce") / 100.0
+        frame["report_date"] = pd.to_datetime(frame["report_dt"], errors="coerce").dt.normalize()
+        frame["crsp_portno"] = frame["crsp_portno"].map(clean_id)
+        frames.append(frame.dropna(subset=["report_date", "sector_key", "weight"]))
+    if not frames:
+        return pd.DataFrame(columns=["crsp_portno", "report_date"])
+    holdings = pd.concat(frames, ignore_index=True)
+    panel = holdings.pivot_table(index=["crsp_portno", "report_date"], columns="sector_key", values="weight", aggfunc="sum", fill_value=0).reset_index()
+    for sector in GICS_SECTORS:
+        if sector not in panel: panel[sector] = 0.0
+        panel = panel.rename(columns={sector: f"sector_{sector}_exposure"})
+    panel = panel.sort_values(["crsp_portno", "report_date"])
+    delta_cols = []
+    for sector in GICS_SECTORS:
+        exposure = f"sector_{sector}_exposure"
+        delta = f"delta_sector_{sector}"
+        panel[delta] = panel.groupby("crsp_portno", sort=False)[exposure].diff()
+        delta_cols.append(delta)
+    panel["sector_rotation_intensity"] = panel[delta_cols].abs().sum(axis=1, min_count=1) / 2.0
+    return panel[["crsp_portno", "report_date"] + [f"sector_{s}_exposure" for s in GICS_SECTORS] + delta_cols + ["sector_rotation_intensity"]]
+
+
+def add_forward_outcomes(pm: pd.DataFrame) -> pd.DataFrame:
+    """Attach leakage-safe forward outcomes beginning in the month after each event."""
+    pm = pm.sort_values(["crsp_portno", "date"]).copy()
+    parts = []
+    for _, group in pm.groupby("crsp_portno", sort=False):
+        g = group.sort_values("date").copy()
+        fund = pd.to_numeric(g["mret"], errors="coerce").to_numpy(dtype=float)
+        market = pd.to_numeric(g["sp500_ret"], errors="coerce").to_numpy(dtype=float)
+        for horizon in PREDICTION_HORIZONS:
+            fund_out, market_out, excess_out, drawdown_out = [], [], [], []
+            for i in range(len(g)):
+                fwd_fund = fund[i + 1:i + 1 + horizon]
+                fwd_market = market[i + 1:i + 1 + horizon]
+                if len(fwd_fund) < horizon or np.isfinite(fwd_fund).sum() < horizon:
+                    fund_out.append(np.nan); market_out.append(np.nan)
+                    excess_out.append(np.nan); drawdown_out.append(np.nan)
+                    continue
+                fr = compound_return(fwd_fund)
+                mr = compound_return(fwd_market)
+                fund_out.append(fr); market_out.append(mr)
+                excess_out.append(fr - mr if np.isfinite(fr) and np.isfinite(mr) else np.nan)
+                drawdown_out.append(max_drawdown_from_monthly(fwd_fund))
+            g[f"future_{horizon}m_return"] = fund_out
+            g[f"future_{horizon}m_sp500_return"] = market_out
+            g[f"future_{horizon}m_excess_return"] = excess_out
+            g[f"future_{horizon}m_drawdown"] = drawdown_out
+        parts.append(g)
+    return pd.concat(parts, ignore_index=True)
+
+
 def load_base_groundtruth(root: Path) -> pd.DataFrame:
     p = find_file(root, BASE_GT_FILES)
     if p is None:
@@ -385,7 +488,10 @@ def load_base_groundtruth(root: Path) -> pd.DataFrame:
     return df
 
 
-def enrich_with_current_and_trailing(gt: pd.DataFrame, pm: pd.DataFrame) -> pd.DataFrame:
+def enrich_with_current_and_trailing(gt: pd.DataFrame, pm: pd.DataFrame, sector_panel: pd.DataFrame) -> pd.DataFrame:
+    # Recompute all forward outcomes from monthly returns so legacy 12M columns cannot
+    # silently conflict with the new four-horizon contract.
+    gt = gt.drop(columns=[c for c in gt.columns if c in FUTURE_COLUMNS or re.match(r"^(future_|direction_label_|outcome_5class_|label_positive_excess_)", c)], errors="ignore")
     current_cols = [
         "crsp_portno", "month_key", "mret", "sp500_ret", "excess_ret", "net_flow", "mtna",
         "exp_ratio", "mgmt_fee", "turn_ratio", "age", "tenure",
@@ -401,7 +507,8 @@ def enrich_with_current_and_trailing(gt: pd.DataFrame, pm: pd.DataFrame) -> pd.D
             f"trailing_avg_mgmt_fee_{years}y", f"trailing_avg_turn_ratio_{years}y",
             f"trailing_avg_age_{years}y", f"trailing_avg_tenure_{years}y",
         ]
-    join_cols = [c for c in current_cols + trailing_cols if c in pm.columns]
+    forward_cols = [c for c in FUTURE_COLUMNS if c.startswith("future_") and c in pm.columns]
+    join_cols = [c for c in current_cols + trailing_cols + forward_cols if c in pm.columns]
     right = pm[join_cols].copy()
     rename = {
         "mret": "current_mret", "sp500_ret": "current_sp500_ret", "excess_ret": "current_excess_ret",
@@ -410,31 +517,37 @@ def enrich_with_current_and_trailing(gt: pd.DataFrame, pm: pd.DataFrame) -> pd.D
         "tenure": "current_tenure",
     }
     right = right.rename(columns=rename)
+    overlap = (set(gt.columns) & set(right.columns)) - {"crsp_portno", "month_key"}
+    gt = gt.drop(columns=sorted(overlap), errors="ignore")
     out = gt.merge(right, on=["crsp_portno", "month_key"], how="left")
+    if not sector_panel.empty:
+        out["report_date"] = pd.to_datetime(out["report_date"], errors="coerce").dt.normalize()
+        sector_overlap = (set(out.columns) & set(sector_panel.columns)) - {"crsp_portno", "report_date"}
+        out = out.drop(columns=sorted(sector_overlap), errors="ignore")
+        out = out.merge(sector_panel, on=["crsp_portno", "report_date"], how="left")
     return out
 
 
-def compute_future_quantiles(df: pd.DataFrame) -> pd.DataFrame:
+def compute_future_labels(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    ex = pd.to_numeric(df.get("future_12m_excess_return"), errors="coerce")
-    df["future_positive_excess"] = np.where(ex.notna(), (ex > 0).astype(int), np.nan)
-    df["label_positive_excess_12m"] = df["future_positive_excess"]
-    df["label_positive_excess_4q"] = df["future_positive_excess"]
-    if ex.notna().sum() >= 10:
-        df["future_return_quantile"] = pd.qcut(ex.rank(method="first"), 4, labels=False, duplicates="drop")
-        top_val = df["future_return_quantile"].max()
-        df["future_top_quartile"] = np.where(df["future_return_quantile"].notna(), (df["future_return_quantile"] == top_val).astype(int), np.nan)
-    else:
-        df["future_return_quantile"] = np.nan
-        df["future_top_quartile"] = np.nan
-    dd = pd.to_numeric(df.get("future_drawdown"), errors="coerce")
-    # Drawdown closer to zero is better. This label is conservative: future drawdown better than -20%.
-    df["label_downside_control_12m"] = np.where(dd.notna(), (dd > -0.20).astype(int), np.nan)
-    df["label_joint_good_12m"] = np.where(
-        df["label_positive_excess_12m"].notna() & df["label_downside_control_12m"].notna(),
-        ((df["label_positive_excess_12m"] == 1) & (df["label_downside_control_12m"] == 1)).astype(int),
-        np.nan,
-    )
+    for horizon in PREDICTION_HORIZONS:
+        ex = pd.to_numeric(df.get(f"future_{horizon}m_excess_return"), errors="coerce")
+        direction = np.select(
+            [ex <= -NEUTRAL_BAND, ex >= NEUTRAL_BAND], [-1, 1], default=0,
+        ).astype(float)
+        direction[ex.isna().to_numpy()] = np.nan
+        df[f"direction_label_{horizon}m"] = direction
+        df[f"label_positive_excess_{horizon}m"] = np.where(ex.notna(), (direction == 1).astype(int), np.nan)
+        # Data-adaptive tails preserve the requested five levels without leaking across time per event.
+        magnitude = ex.abs()
+        cutoff = float(magnitude[magnitude.notna()].median()) if magnitude.notna().any() else NEUTRAL_BAND
+        cutoff = max(cutoff, NEUTRAL_BAND)
+        df[f"outcome_5class_{horizon}m"] = np.select(
+            [ex <= -cutoff, ex < -NEUTRAL_BAND, ex <= NEUTRAL_BAND, ex < cutoff],
+            ["large_loss", "small_loss", "neutral", "small_win"],
+            default="large_win",
+        )
+        df.loc[ex.isna(), f"outcome_5class_{horizon}m"] = np.nan
     return df
 
 
@@ -442,44 +555,71 @@ def add_rolling_ex_ante_style_deviation(df: pd.DataFrame, years: int) -> pd.Data
     df = df.copy()
     months = TRAILING_WINDOWS[years]
     df["report_date"] = pd.to_datetime(df["report_date"], errors="coerce")
-    for c in STYLE_DEVIATION_FEATURES:
+    all_baseline_features = list(dict.fromkeys(STYLE_DEVIATION_FEATURES + ACTION_DEVIATION_FEATURES))
+    for c in all_baseline_features:
         if c not in df.columns:
             df[c] = np.nan
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
-    # Time-local market std by year; fallback to global std.
-    year_std = df.groupby("year")[STYLE_DEVIATION_FEATURES].transform("std")
-    global_std = df[STYLE_DEVIATION_FEATURES].std(skipna=True).replace(0, np.nan)
-    for c in STYLE_DEVIATION_FEATURES:
-        year_std[c] = year_std[c].fillna(global_std.get(c, np.nan)).replace(0, np.nan)
+    # Strict event-time baseline.  At each report_date, only manager observations
+    # in [report_date - 36 months, report_date) are used. Same-date reports are
+    # excluded together, so another portfolio disclosed on the same date cannot leak.
+    tmp = df.sort_values(["manager", "report_date", "crsp_portno"]).copy()
+    baseline_mean = pd.DataFrame(np.nan, index=tmp.index, columns=all_baseline_features, dtype=float)
+    baseline_std = pd.DataFrame(np.nan, index=tmp.index, columns=all_baseline_features, dtype=float)
+    counts = pd.Series(0, index=tmp.index, dtype=int)
+    for _, group in tmp.groupby("manager", sort=False, dropna=False):
+        g = group.sort_values(["report_date", "crsp_portno"])
+        dates = g["report_date"].to_numpy(dtype="datetime64[ns]")
+        start_dates = (g["report_date"] - pd.DateOffset(months=months)).to_numpy(dtype="datetime64[ns]")
+        starts = np.searchsorted(dates, start_dates, side="left")
+        ends = np.searchsorted(dates, dates, side="left")
+        counts.loc[g.index] = ends - starts
+        for c in all_baseline_features:
+            values = pd.to_numeric(g[c], errors="coerce").to_numpy(dtype=float)
+            valid = np.isfinite(values)
+            safe = np.where(valid, values, 0.0)
+            csum = np.r_[0.0, np.cumsum(safe)]
+            csq = np.r_[0.0, np.cumsum(safe * safe)]
+            ccount = np.r_[0, np.cumsum(valid.astype(int))]
+            nobs = ccount[ends] - ccount[starts]
+            total = csum[ends] - csum[starts]
+            total_sq = csq[ends] - csq[starts]
+            mean = np.divide(total, nobs, out=np.full(len(g), np.nan), where=nobs >= 2)
+            variance = np.divide(total_sq - np.divide(total * total, nobs, out=np.zeros(len(g)), where=nobs > 0), nobs - 1, out=np.full(len(g), np.nan), where=nobs >= 2)
+            std = np.sqrt(np.maximum(variance, 0.0))
+            std[std <= 1e-12] = np.nan
+            baseline_mean.loc[g.index, c] = mean
+            baseline_std.loc[g.index, c] = std
 
-    # Fast ex-ante baseline: cumulative past manager+portfolio mean, shifted by one report.
-    # This guarantees the current report is not used to define its own style.
-    tmp = df.sort_values(["manager", "crsp_portno", "report_date"]).copy()
-    group_cols = ["manager", "crsp_portno"]
-    baseline_tmp = pd.DataFrame(index=tmp.index)
-    counts_tmp = tmp.groupby(group_cols, sort=False).cumcount()
-    for c in STYLE_DEVIATION_FEATURES:
-        shifted = tmp.groupby(group_cols, sort=False)[c].shift(1)
-        baseline_tmp[c] = shifted.groupby([tmp["manager"], tmp["crsp_portno"]], sort=False).expanding(min_periods=2).mean().reset_index(level=[0,1], drop=True)
-    baseline = baseline_tmp.reindex(df.index)
-    counts = counts_tmp.reindex(df.index)
-
-    zparts = []
-    for c in STYLE_DEVIATION_FEATURES:
-        z = ((df[c] - baseline[c]).abs() / year_std[c]).replace([np.inf, -np.inf], np.nan)
-        zparts.append(z)
+    baseline = baseline_mean.reindex(df.index)
+    scale = baseline_std.reindex(df.index)
+    zscores: Dict[str, pd.Series] = {}
+    for c in all_baseline_features:
+        z = ((pd.to_numeric(df[c], errors="coerce") - baseline[c]).abs() / scale[c]).replace([np.inf, -np.inf], np.nan)
+        zscores[c] = z
         df[f"rolling_dev_{c}_{years}y"] = z
         df[f"rolling_past_mean_{c}_{years}y"] = baseline[c]
-    score = pd.concat(zparts, axis=1).mean(axis=1)
-    df[f"rolling_style_deviation_score_{years}y"] = score
-    df["rolling_style_deviation_score"] = score.fillna(pd.to_numeric(df.get("style_deviation_score"), errors="coerce"))
+        df[f"rolling_past_std_{c}_{years}y"] = scale[c]
+
+    def mean_score(features: List[str]) -> pd.Series:
+        return pd.concat([zscores[c] for c in features], axis=1).mean(axis=1)
+
+    style_score = mean_score(STYLE_DEVIATION_FEATURES)
+    sector_score = mean_score(SECTOR_STYLE_FEATURES)
+    cross_asset_score = mean_score(CROSS_ASSET_STYLE_FEATURES)
+    action_score = mean_score(ACTION_DEVIATION_FEATURES)
+    df[f"rolling_style_deviation_score_{years}y"] = style_score
+    df["rolling_style_deviation_score"] = style_score.fillna(pd.to_numeric(df.get("style_deviation_score"), errors="coerce"))
+    df["rolling_sector_deviation_score"] = sector_score
+    df["rolling_cross_asset_deviation_score"] = cross_asset_score
+    df["rolling_action_deviation_score"] = action_score
     df["style_window_months"] = months
     df["style_window_years"] = years
-    df["style_window_type"] = "ex_ante_cumulative_past_manager_portfolio_mean"
+    df["style_window_type"] = "strict_event_time_trailing_36m_manager_history_excluding_current_date"
     df["style_window_start_date"] = (df["report_date"] - pd.DateOffset(months=months)).dt.strftime("%Y-%m-%d")
     df["style_window_end_date"] = (df["report_date"] - pd.DateOffset(days=1)).dt.strftime("%Y-%m-%d")
-    df["style_obs_count"] = counts
+    df["style_obs_count"] = counts.reindex(df.index).fillna(0).astype(int)
     return df
 
 def add_horizon_aliases(df: pd.DataFrame, years: int) -> pd.DataFrame:
@@ -505,11 +645,21 @@ def add_horizon_aliases(df: pd.DataFrame, years: int) -> pd.DataFrame:
     }
     for src, dst in alias_map.items():
         out[dst] = out[src] if src in out.columns else np.nan
+    bond_money = pd.to_numeric(out.get("bond_money_exposure", pd.Series(np.nan, index=out.index)), errors="coerce")
+    indirect_equity = pd.to_numeric(out.get("indirect_equity_exposure", pd.Series(np.nan, index=out.index)), errors="coerce")
+    out["nonstock_total_exposure"] = pd.concat([bond_money, indirect_equity], axis=1).sum(axis=1, min_count=1)
+    if all(c in out.columns for c in ("manager", "crsp_portno", "report_date")):
+        order = out.sort_values(["manager", "crsp_portno", "report_date"]).index
+        ordered = out.loc[order]
+        out.loc[order, "delta_nonstock_total_exposure"] = ordered.groupby(["manager", "crsp_portno"], sort=False)["nonstock_total_exposure"].diff().to_numpy()
+    else:
+        out["delta_nonstock_total_exposure"] = pd.to_numeric(out.get("delta_bond_money", pd.Series(np.nan, index=out.index)), errors="coerce") + pd.to_numeric(out.get("delta_indirect_equity", pd.Series(np.nan, index=out.index)), errors="coerce")
+    out["delta_sector_exposure"] = pd.to_numeric(out.get("sector_rotation_intensity", pd.Series(np.nan, index=out.index)), errors="coerce")
     out["feature_cutoff_date"] = (pd.to_datetime(out["report_date"]) - pd.DateOffset(days=1)).dt.strftime("%Y-%m-%d")
     out["label_start_date"] = (pd.to_datetime(out["report_date"]) + pd.DateOffset(days=1)).dt.strftime("%Y-%m-%d")
-    out["label_end_date"] = (pd.to_datetime(out["report_date"]) + pd.DateOffset(months=FUTURE_MONTHS)).dt.strftime("%Y-%m-%d")
+    out["label_end_date"] = (pd.to_datetime(out["report_date"]) + pd.DateOffset(months=max(PREDICTION_HORIZONS))).dt.strftime("%Y-%m-%d")
     out = add_rolling_ex_ante_style_deviation(out, years)
-    out = compute_future_quantiles(out)
+    out = compute_future_labels(out)
     out["event_id"] = (
         out["training_window_years"].astype(str) + "y__" +
         out.get("manager", pd.Series("", index=out.index)).map(clean_text).str.replace(r"\W+", "_", regex=True).str[:40] + "__" +
@@ -524,12 +674,12 @@ def add_horizon_aliases(df: pd.DataFrame, years: int) -> pd.DataFrame:
 
 def make_ml_training_table(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    target = "label_positive_excess_12m"
     needed = [c for c in ML_NUMERIC_COLUMNS + ML_CATEGORICAL_COLUMNS if c in df.columns]
     meta_cols = [c for c in IDENTITY_COLUMNS if c in df.columns]
     keep = meta_cols + needed + [c for c in TARGET_COLUMNS if c in df.columns]
     ml = df[keep].copy()
-    ml = ml[pd.to_numeric(ml[target], errors="coerce").notna()]
+    outcome_cols = [f"future_{h}m_excess_return" for h in PREDICTION_HORIZONS]
+    ml = ml[ml[outcome_cols].apply(pd.to_numeric, errors="coerce").notna().any(axis=1)]
     # Keep rows where at least one core action/exposure feature exists.
     core = [c for c in ["delta_stock", "delta_beta", "delta_technology", "stock_allocation", "portfolio_beta"] if c in ml.columns]
     if core:
@@ -539,7 +689,7 @@ def make_ml_training_table(df: pd.DataFrame) -> pd.DataFrame:
 
 def write_schema_and_dictionary(out_dir: Path, audit: dict) -> None:
     schema = {
-        "description": "Balanced fund manager-action event ground truth with current-month features, 3Y/5Y trailing features, rolling ex-ante style deviation, and future 12M labels.",
+        "description": "Balanced-fund manager-action events with a three-year ex-ante style window and 3M/6M/9M/12M forward labels.",
         "identity_columns": IDENTITY_COLUMNS,
         "current_month_columns": CURRENT_COLUMNS,
         "trailing_alias_columns": TRAILING_ALIAS_COLUMNS,
@@ -552,12 +702,16 @@ def write_schema_and_dictionary(out_dir: Path, audit: dict) -> None:
     (out_dir / "manager_action_ground_truth_schema.json").write_text(json.dumps(schema, ensure_ascii=False, indent=2), encoding="utf-8")
     md = [
         "# manager_action_ground_truth data dictionary", "",
-        "Each row is a manager-action event at a holdings report date. The v2 builder expands each base event into 3Y and 5Y training-window views, both predicting future 12-month outcomes.", "",
+        "Each row is a manager-action event. Features end before the event and outcomes cover 3M, 6M, 9M and 12M after it.", "",
         "## Key additions", "",
         "- `current_*`: current report-month fund characteristics.",
         "- `fund_trailing_*`: generic alias for the chosen training window.",
         "- `rolling_style_deviation_score`: deviation from the manager's own past style before report_date.",
-        "- `label_positive_excess_12m`: binary target for Part6 ML.",
+        "- `rolling_sector_deviation_score`: 11-sector exposure deviation from the strict prior-36M manager baseline.",
+        "- `rolling_action_deviation_score`: action-delta deviation from the strict prior-36M manager baseline.",
+        "- `style_window_type`: strict event-time trailing 36M manager history, excluding every current-date event.",
+        "- `direction_label_{h}m`: -1/0/+1 direction with a +/-0.5% neutral band.",
+        "- `outcome_5class_{h}m`: large loss, small loss, neutral, small win, or large win.",
         "- `leakage_check_passed`: confirms the style window ends before report_date.",
     ]
     (out_dir / "manager_action_ground_truth_data_dictionary.md").write_text("\n".join(md), encoding="utf-8")
@@ -569,10 +723,12 @@ def build_ground_truth_v2(root: Path, output_dir: Path) -> Tuple[pd.DataFrame, d
     print(f"      base rows = {len(base):,}")
     print("[2/6] Load S&P500 and fund monthly data; compute current and rolling features")
     sp500 = load_sp500(root)
-    port_month = load_fund_month_table(root, sp500)
+    port_month = add_forward_outcomes(load_fund_month_table(root, sp500))
     print(f"      port-month rows = {len(port_month):,}")
-    print("[3/6] Join current month and 3Y/5Y trailing features")
-    enriched = enrich_with_current_and_trailing(base, port_month)
+    print("[3/6] Join current month, 11-sector panel, 3Y style features and four forward horizons")
+    sector_panel = load_sector_exposure_panel(root)
+    print(f"      sector-report rows = {len(sector_panel):,}")
+    enriched = enrich_with_current_and_trailing(base, port_month, sector_panel)
     print("[4/6] Build horizon-specific ground truth and ML datasets")
     output_dir.mkdir(parents=True, exist_ok=True)
     prediction_dir = output_dir.parent / "prediction"
@@ -580,11 +736,11 @@ def build_ground_truth_v2(root: Path, output_dir: Path) -> Tuple[pd.DataFrame, d
     horizon_frames = []
     ml_frames = []
     ml_outputs = {}
-    for years in [3, 5]:
+    for years in [3]:
         h = add_horizon_aliases(enriched, years)
         ml = make_ml_training_table(h)
-        horizon_path = output_dir / f"manager_action_ground_truth_trailing{years}y_future12m.csv"
-        ml_path = prediction_dir / f"part6_prediction_dataset_trailing{years}y_future12m.csv"
+        horizon_path = output_dir / f"manager_action_ground_truth_trailing{years}y_multi_horizon.csv"
+        ml_path = prediction_dir / f"part6_prediction_dataset_trailing{years}y_multi_horizon.csv"
         write_dataframe_csv(horizon_path, h)
         write_dataframe_csv(ml_path, ml)
         horizon_frames.append(h)
@@ -604,12 +760,15 @@ def build_ground_truth_v2(root: Path, output_dir: Path) -> Tuple[pd.DataFrame, d
         "combined_groundtruth": str(combined_gt_path),
         "combined_ml_dataset": str(combined_ml_path),
         "ml_outputs": ml_outputs,
-        "target": "label_positive_excess_12m",
-        "training_windows": [3, 5],
-        "future_months": FUTURE_MONTHS,
+        "targets": [f"future_{h}m_excess_return" for h in PREDICTION_HORIZONS],
+        "training_windows": [3],
+        "prediction_horizons_months": list(PREDICTION_HORIZONS),
+        "neutral_band": NEUTRAL_BAND,
         "outcome_label_counts": combined_gt.get("outcome_label", pd.Series(dtype=str)).value_counts(dropna=False).to_dict(),
-        "label_positive_excess_counts": combined_ml.get("label_positive_excess_12m", pd.Series(dtype=float)).value_counts(dropna=False).to_dict(),
+        "direction_label_counts": {str(h): combined_ml.get(f"direction_label_{h}m", pd.Series(dtype=float)).value_counts(dropna=False).to_dict() for h in PREDICTION_HORIZONS},
         "leakage_check_passed_counts": combined_gt.get("leakage_check_passed", pd.Series(dtype=bool)).value_counts(dropna=False).to_dict(),
+        "style_window_type_counts": combined_gt.get("style_window_type", pd.Series(dtype=str)).value_counts(dropna=False).to_dict(),
+        "style_obs_count_summary": pd.to_numeric(combined_gt.get("style_obs_count"), errors="coerce").describe().to_dict(),
         "ml_numeric_columns": [c for c in ML_NUMERIC_COLUMNS if c in combined_ml.columns],
         "ml_categorical_columns": [c for c in ML_CATEGORICAL_COLUMNS if c in combined_ml.columns],
     }
@@ -620,7 +779,7 @@ def build_ground_truth_v2(root: Path, output_dir: Path) -> Tuple[pd.DataFrame, d
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build/enrich manager-action ground truth with 3Y/5Y ML datasets.")
+    parser = argparse.ArgumentParser(description="Build manager-action ground truth for 3M/6M/9M/12M prediction.")
     parser.add_argument("--data-root", type=Path, default=DEFAULT_DATA_ROOT)
     parser.add_argument("--output-dir", type=Path, default=None)
     args = parser.parse_args()

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Tab6 S&P500 Fund Analysis</title>
-  <link rel="stylesheet" href="style.css?v=20260708-part6-anchor-style" />
+  <link rel="stylesheet" href="style.css?v=20260716-part6-multievent-rolling36" />
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 </head>
@@ -309,40 +309,55 @@
 
     <section class="panel part6-panel hidden" id="part6Section">
       <div class="section-head">
-        <h2>Part 6：Backend ML Result / SHAP</h2>
+        <h2>Part 6：多天期決策診斷與可解釋性分析</h2>
         <div class="actions">
           <button id="runBackendAnalysisBtn" type="button">Run Backend Analysis</button>
         </div>
       </div>
 
-      <div id="part6Status" class="inline-status">請先載入 Part1 基金月資料。Part6 固定使用 trailing 3年與 future 12M target。</div>
+      <div id="part6Status" class="inline-status">請先載入 Part1 基金月資料。系統使用事件前 3 年風格基準，並同時輸出未來 3、6、9、12 個月結果。</div>
       <div id="backendAnalysisStatus" class="inline-status backend-status">尚未送出 Part1–Part5 state。</div>
 
       <div class="control-grid part6-controls">
         <label class="control compact">
-          Part6 顯示模式
+          顯示模式
           <select id="part6ModeSelect">
-            <option value="backend" selected>Backend handoff / ML result</option>
-            <option value="shap">SHAP explanation</option>
+            <option value="backend" selected>多天期預測</option>
+            <option value="shap">TreeSHAP 與聚類</option>
           </select>
         </label>
         <label class="control compact">
-          過去視窗
+          歷史風格視窗
           <select id="part6WindowSelect" disabled>
-            <option value="y3" selected>過去3年</option>
+            <option value="y3" selected>事件前 3 年（ex-ante）</option>
           </select>
         </label>
         <label class="control compact">
-          未來標籤
-          <select id="part6TargetSelect" disabled>
-            <option value="future12m" selected>未來12個月 positive excess</option>
+          解釋天期
+          <select id="part6TargetSelect">
+            <option value="3">未來 3 個月</option>
+            <option value="6">未來 6 個月</option>
+            <option value="9">未來 9 個月</option>
+            <option value="12" selected>未來 12 個月</option>
           </select>
         </label>
       </div>
 
       <div id="part6FrontendContent" class="hidden"></div>
       <div id="part6BackendContent" class="part6-backend-empty">
-        <div class="part6-backend-empty-window">Part6 已移除 frontend prediction sandbox。按 Run Backend Analysis 後，後端會接收 Part1–Part5 JSON、建立 3Y ML feature row、載入模型 pickle，並回傳 ML prediction 與 SHAP summary。</div>
+        <div class="part6-backend-empty-window">按 Run Backend Analysis 後，系統會建立五層特徵、執行四天期雙階段預測，再回傳 TreeSHAP、時序聚類與逆向信度結果。</div>
+
+        <div class="part6-temporal-panel">
+          <div class="part6-temporal-head"><strong>事件期間</strong><span id="part6DateRangeLabel">等待資料範圍</span></div>
+          <div class="part6-dual-range">
+            <input id="part6DateStartRange" type="range" min="0" max="1" value="0" />
+            <input id="part6DateEndRange" type="range" min="0" max="1" value="1" />
+          </div>
+          <div class="part6-horizon-tabs" id="part6HorizonTabs">
+            <button type="button" data-horizon="3">3M</button><button type="button" data-horizon="6">6M</button>
+            <button type="button" data-horizon="9">9M</button><button type="button" data-horizon="12" class="active">12M</button>
+          </div>
+        </div>
 
         <div class="metrics part6-backend-metrics">
           <div><span>ML events</span><strong id="metricBackendPredictionCount">-</strong></div>
@@ -351,21 +366,70 @@
           <div><span>最高 positive excess 機率</span><strong id="metricBackendTopProb">-</strong></div>
         </div>
 
+        <div class="part6-expert-panel">
+          <div class="section-head">
+            <div>
+              <h3>平衡型基金專家 × AI 股債配置</h3>
+              <p class="part6-method-note">以同風格相對績效形成專家權重，再結合 AI 信心；不納入股票型基金 Copycat 策略。</p>
+            </div>
+          </div>
+          <div id="part6ExpertLatestCards" class="part6-anchor-cards"></div>
+          <div id="part6ExpertAllocationChart" class="chart part5-chart part6-wide-chart"></div>
+          <div id="part6ExpertRecommendationTable" class="table-wrap"></div>
+          <div id="part6ExpertManagerTable" class="table-wrap"></div>
+          <div id="part6ExpertCaveat" class="inline-status"></div>
+        </div>
+
 
         <div id="part6AnchorContextCards" class="part6-anchor-cards"></div>
         <div id="part6StyleEventChart" class="chart part5-chart part6-wide-chart part6-style-event-chart"></div>
         <div id="part6StyleEventTable" class="table-wrap"></div>
 
+        <div class="part6-diagnostic-grid">
+          <div id="part6ClusterMap" class="chart part5-chart"></div>
+          <div id="part6ClusterSummary" class="table-wrap"></div>
+        </div>
+        <div class="part6-fidelity-panel">
+          <div class="section-head"><h3>逆向信度驗證</h3><span id="part6FidelityHint">點擊聚類氣泡查看</span></div>
+          <div class="part6-fidelity-grid">
+            <div id="part6FidelityShapChart" class="chart part5-chart"></div>
+            <div id="part6FidelityRawChart" class="chart part5-chart"></div>
+          </div>
+        </div>
+
         <div class="part6-chart-grid backend-result-grid">
           <div id="part6PredictionRankChart" class="chart part5-chart"></div>
           <div id="part6ProbabilityHistogramChart" class="chart part5-chart"></div>
-          <div id="part6StockActionChart" class="chart part5-chart part6-wide-chart"></div>
           <div id="part6ShapFeatureChart" class="chart part5-chart part6-wide-chart"></div>
-          <div id="part6SingleEventShapChart" class="chart part5-chart part6-wide-chart"></div>
+          <div class="part6-wide-chart part6-shap-compare-panel">
+            <div class="part6-shap-picker-head">
+              <label class="control">SHAP events（可多選，最多 8 個）
+                <select id="part6ShapEventSelect" multiple size="6"></select>
+              </label>
+              <div class="actions">
+                <button id="part6SelectAllShapEventsBtn" type="button" class="secondary">選前 8 個</button>
+                <button id="part6ClearShapEventsBtn" type="button" class="secondary">只留第一個</button>
+              </div>
+            </div>
+            <div id="part6ShapSelectionHint" class="part6-method-note">等待 Part6 SHAP events。</div>
+            <div id="part6SingleEventShapChart" class="chart part5-chart part6-wide-chart"></div>
+          </div>
+        </div>
+
+        <div class="part6-action-panel">
+          <div class="section-head">
+            <div>
+              <h3>Part 5 真實持股新增／加碼／減碼明細</h3>
+              <p id="part6StockActionSummary" class="part6-method-note">等待 Part 5 選取事件。</p>
+            </div>
+          </div>
+          <div class="part6-action-chart-scroll">
+            <div id="part6StockActionChart" class="chart part5-chart part6-wide-chart part6-action-chart"></div>
+          </div>
+          <div id="part6StockActionTable" class="table-wrap"></div>
         </div>
 
         <div id="part6PredictionResultTable" class="table-wrap"></div>
-        <div id="part6StockActionTable" class="table-wrap"></div>
         <div id="part6ShapResultTable" class="table-wrap"></div>
         <div id="backendAnalysisSummary" class="table-wrap"></div>
       </div>
@@ -374,19 +438,42 @@
 
     <section class="panel part7-panel" id="part7Section">
       <div class="section-head">
-        <h2>Part 7：LLM Explanation Workspace</h2>
+        <div>
+          <h2>Part 7：Evidence-Grounded LLM Critic</h2>
+          <p class="part7-subtitle">不重做預測；稽核 Part6 prediction / SHAP，並同時尋找支持證據、反證、結構轉折與資料限制。</p>
+        </div>
         <div class="actions">
-          <button id="part7RunAnalysisBtn" type="button">Run Analysis</button>
+          <button id="part7RunAnalysisBtn" type="button">Run Evidence Critic</button>
         </div>
       </div>
-      <div id="part7Status" class="inline-status">預留空視窗：之後可解釋 Part6 frontend prediction、Backend ML 結果，以及整體系統分析。</div>
-      <div id="part7ExplanationWorkspace" class="part7-empty-window"></div>
+      <div id="part7Status" class="inline-status">正在檢查 Part7 RAG 與 OpenAI API 狀態…</div>
+
+      <div class="part7-control-grid">
+        <label class="control">Part6 events（可多選；預設跟隨 Part6 SHAP）
+          <select id="part7EventSelect" multiple size="6"><option value="">自動選擇最高機率事件</option></select>
+        </label>
+        <label class="control">解釋天期
+          <select id="part7HorizonSelect">
+            <option value="3">3M</option><option value="6">6M</option><option value="9">9M</option><option value="12" selected>12M</option>
+          </select>
+        </label>
+        <label class="control">OpenAI model
+          <input id="part7ModelInput" value="gpt-5.6" autocomplete="off" />
+        </label>
+        <label class="part7-check"><input id="part7WebSearchInput" type="checkbox" checked /> 同期 web search（新聞／FOMC／基金文本）</label>
+      </div>
+
+      <label class="control part7-question">Critic 研究問題（選填）
+        <textarea id="part7QuestionInput" rows="3" placeholder="例如：這次降低股票、提高債券配置的模型解釋，是否受到當時可得證據支持？有哪些反證？"></textarea>
+      </label>
+
+      <div id="part7RuntimeCards" class="part7-runtime-grid"></div>
+      <div id="part7ExplanationWorkspace" class="part7-empty-window">
+        <p>即使尚未設定 API Key，也可按下按鈕檢查本地 RAG evidence IDs 與完整 prompt preview。</p>
+      </div>
     </section>
   </main>
 
-  <script src="app.js?v=20260708-part6-anchor-style"></script>
+  <script src="app.js?v=20260716-part6-multievent-rolling36"></script>
 </body>
 </html>
-
-
-

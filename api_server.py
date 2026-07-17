@@ -11,14 +11,24 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 try:
+    from backend.part7_rag_service import part7_status, run_part7_critic
+    PART7_IMPORT_ERROR = None
+except Exception as exc:
+    part7_status = None
+    run_part7_critic = None
+    PART7_IMPORT_ERROR = exc
+
+try:
     from backend.feature_builder import build_feature_frame
     from backend.prediction_service import predict_events
     from backend.shap_service import explain_events
+    from backend.expert_collaboration_service import build_expert_collaboration
     BACKEND_IMPORT_ERROR = None
 except Exception as exc:  # keep Part1-Part5 usable even if backend folder is missing
     build_feature_frame = None
     predict_events = None
     explain_events = None
+    build_expert_collaboration = None
     BACKEND_IMPORT_ERROR = exc
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -60,9 +70,9 @@ CSV_ALIASES: Dict[str, Path] = {
 }
 
 app = FastAPI(
-    title="Balanced Fund Visual Analytics API - 3Y Backend ML",
-    version="0.2.1",
-    description="Serves frontend assets and CSVs, saves Part1-Part5 JSON, and runs 3Y backend ML/SHAP when backend artifacts exist.",
+    title="Balanced Fund Decision Analytics API",
+    version="0.3.0",
+    description="Runs four-horizon dual-stage prediction, exact TreeSHAP, temporal clustering and fidelity checks.",
 )
 app.add_middleware(
     CORSMiddleware,
@@ -81,6 +91,16 @@ class AnalyzeVisualStateRequest(BaseModel):
     part4: Optional[Dict[str, Any]] = None
     part5: Optional[Dict[str, Any]] = None
     part6: Optional[Dict[str, Any]] = None
+
+
+class Part7CriticRequest(BaseModel):
+    event_id: Optional[str] = None
+    event_ids: Optional[list[str]] = None
+    horizon_months: int = 12
+    model: Optional[str] = None
+    use_web_search: bool = True
+    max_local_chunks: int = 12
+    question: Optional[str] = None
 
 
 def _safe_len(value: Any) -> int:
@@ -168,7 +188,11 @@ def parse_visual_state(payload: AnalyzeVisualStateRequest) -> Dict[str, Any]:
             "brushed_report_count": _safe_len(part5.get("brushedReportKeys")),
             "active_report_key": part5.get("activeReportKey"),
         },
-        "part6": {"mode": part6.get("mode", "backend"), "window": part6.get("window", "y3"), "target": part6.get("target", "future12m")},
+        "part6": {
+            "mode": part6.get("mode", "backend"), "window": part6.get("window", "y3"),
+            "target": part6.get("target", "future12m"), "horizon_months": part6.get("horizon_months", 12),
+            "date_start": part6.get("date_start"), "date_end": part6.get("date_end"),
+        },
     }
 
 
@@ -191,8 +215,8 @@ def list_known_files() -> Dict[str, Any]:
         files.append({"public_name": public_name, "path": str(path), "exists": path.exists(), "size": path.stat().st_size if path.exists() else None})
     model_dir = BASE_DIR / "models" / "action_effectiveness" / "v001"
     extra = [
-        DATA_DIR / "derived" / "prediction" / "part6_prediction_dataset_trailing3y_future12m.csv",
-        model_dir / "lightgbm_action_model_trailing3y.pkl",
+        DATA_DIR / "derived" / "prediction" / "part6_prediction_dataset_trailing3y_multi_horizon.csv",
+        BASE_DIR / "models" / "action_effectiveness" / "v002" / "dual_stage_model_12m.pkl",
         model_dir / "feature_columns.json",
     ]
     return {"base_dir": str(BASE_DIR), "files": files, "backend_artifacts": [{"path": str(p), "exists": p.exists(), "size": p.stat().st_size if p.exists() else None} for p in extra]}
@@ -206,7 +230,9 @@ def analyze_visual_state(payload: AnalyzeVisualStateRequest) -> Dict[str, Any]:
     warnings: list[str] = []
     ml_result: Dict[str, Any] | None = None
     shap_result: Dict[str, Any] | None = None
+    expert_collaboration: Dict[str, Any] | None = None
     feature_dataset_path = ""
+    date_domain: Dict[str, str] = {}
 
     if BACKEND_IMPORT_ERROR is not None:
         warnings.append(f"Backend modules are not importable: {BACKEND_IMPORT_ERROR}")
@@ -215,20 +241,73 @@ def analyze_visual_state(payload: AnalyzeVisualStateRequest) -> Dict[str, Any]:
             build = build_feature_frame(payload_dict, DATA_DIR, max_events=50)  # type: ignore[misc]
             warnings.extend(build.warnings)
             feature_dataset_path = build.dataset_path
-            ml_result = predict_events(build.frame, build.metadata, BASE_DIR, model_name="lightgbm")  # type: ignore[misc]
-            shap_result = explain_events(build.frame, build.metadata, BASE_DIR, model_name="lightgbm", top_k=8)  # type: ignore[misc]
+            date_domain = build.date_domain
         except Exception as exc:
-            warnings.append(f"ML/SHAP pipeline did not complete: {exc}")
+            build = None
+            warnings.append(f"Part 6 feature matching did not complete: {exc}")
+
+        if build is not None:
+            try:
+                ml_result = predict_events(build.frame, build.metadata, BASE_DIR, model_name="xgboost")  # type: ignore[misc]
+                fallback_horizons = [
+                    h for h, info in (ml_result.get("models") or {}).items()
+                    if "fallback" in str((info or {}).get("classifier_type", "")).lower()
+                ]
+                if fallback_horizons:
+                    warnings.append(
+                        "XGBoost is unavailable; Part 6 is using the portable sklearn tree bundles "
+                        f"for {', '.join(fallback_horizons)}M. Install XGBoost and restart the API to use the primary models."
+                    )
+            except Exception as exc:
+                warnings.append(f"Part 6 prediction did not complete: {exc}")
+
+        if build is not None and ml_result is not None:
+            selected_horizon = int((payload_dict.get("part6") or {}).get("horizon_months", 12))
+            if selected_horizon not in (3, 6, 9, 12):
+                selected_horizon = 12
+            try:
+                expert_collaboration = build_expert_collaboration(  # type: ignore[misc]
+                    build.frame, build.metadata, ml_result, payload_dict, selected_horizon,
+                )
+                expert_collaboration.setdefault("report_manager_map", {}).update(build.report_manager_map)
+            except Exception as exc:
+                warnings.append(f"Part 6 expert-collaboration analysis did not complete: {exc}")
+            try:
+                shap_result = explain_events(
+                    build.frame, build.metadata, BASE_DIR, model_name="xgboost", top_k=8,
+                    selected_horizon=selected_horizon, prediction_result=ml_result,
+                )  # type: ignore[misc]
+                if shap_result.get("method") != "TreeSHAP":
+                    warnings.append(
+                        "The SHAP package is unavailable; Part 6 is showing portable tree-importance contributions. "
+                        "Install SHAP and restart the API for exact TreeSHAP."
+                    )
+            except Exception as exc:
+                warnings.append(f"Part 6 explanation/clustering did not complete: {exc}")
+
+    used_fallback = bool(ml_result) and any(
+        "fallback" in str((info or {}).get("classifier_type", "")).lower()
+        for info in ((ml_result or {}).get("models") or {}).values()
+    )
+    if ml_result:
+        message = (
+            "Part 6 已連結 Part 5 選取事件；目前使用 sklearn portable 模型。安裝 XGBoost 後請重啟 API。"
+            if used_fallback else
+            "Part 6 已連結 Part 5 選取事件並完成 3M/6M/9M/12M 分析。"
+        )
+    else:
+        message = "Part 6 未能產生預測，請查看下方錯誤訊息。"
 
     result = {
         "status": "ok" if ml_result else "partial",
-        "mode": "3y_backend_ml_shap",
-        "message": "Backend saved Part1-Part5 JSON and attempted 3Y ML/SHAP analysis.",
+        "mode": "multi_horizon_dual_stage_tree_shap",
+        "message": message,
         "saved_files": saved_files,
         "parsed_state": parsed_state,
         "received_summary": {
-            "horizon": "y3",
-            "target": "label_positive_excess_12m",
+            "style_window": "trailing_3y_ex_ante",
+            "prediction_horizons_months": [3, 6, 9, 12],
+            "date_domain": date_domain,
             "part1_a_count": parsed_state["part1"]["raw_a_count"],
             "part1_b_count": parsed_state["part1"]["raw_b_count"],
             "part2_region_count": parsed_state["part2"]["region_count"],
@@ -241,9 +320,41 @@ def analyze_visual_state(payload: AnalyzeVisualStateRequest) -> Dict[str, Any]:
         },
         "ml_result": ml_result,
         "shap_result": shap_result,
+        "expert_collaboration": expert_collaboration,
         "warnings": warnings,
     }
     save_json_file(BACKEND_PAYLOADS_DIR / "backend_ml_latest.json", result)
+    return result
+
+
+@app.get("/api/part7/status")
+def get_part7_status() -> Dict[str, Any]:
+    if PART7_IMPORT_ERROR is not None or part7_status is None:
+        return {"mode": "unavailable", "error": repr(PART7_IMPORT_ERROR)}
+    return part7_status(BASE_DIR)
+
+
+@app.post("/api/part7/critic")
+def analyze_part7(payload: Part7CriticRequest) -> Dict[str, Any]:
+    if PART7_IMPORT_ERROR is not None or run_part7_critic is None:
+        raise HTTPException(status_code=503, detail=f"Part7 service unavailable: {PART7_IMPORT_ERROR}")
+    try:
+        result = run_part7_critic(
+            BASE_DIR,
+            event_id=payload.event_id,
+            event_ids=payload.event_ids,
+            horizon_months=payload.horizon_months,
+            model=payload.model,
+            use_web_search=payload.use_web_search,
+            max_local_chunks=payload.max_local_chunks,
+            question=payload.question,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Part7 critic failed: {exc}") from exc
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    part7_dir = OUTPUTS_DIR / "part7"
+    save_json_file(part7_dir / f"part7_critic_{timestamp}.json", result)
+    save_json_file(part7_dir / "part7_critic_latest.json", result)
     return result
 
 

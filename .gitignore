@@ -1,2 +1,5 @@
 data/**/*.csv
 data/*.csv
+
+# 阻止所有的 JSON 檔案被寫入/提交
+*.json

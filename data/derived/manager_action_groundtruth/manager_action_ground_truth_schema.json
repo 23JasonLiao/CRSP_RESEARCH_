@@ -1,5 +1,5 @@
 {
-  "description": "Balanced fund manager-action event ground truth with current-month features, 3Y/5Y trailing features, rolling ex-ante style deviation, and future 12M labels.",
+  "description": "Balanced-fund manager-action events with a three-year ex-ante style window and 3M/6M/9M/12M forward labels.",
   "identity_columns": [
     "event_id",
     "training_window_years",
@@ -16,7 +16,12 @@
     "month_key",
     "feature_cutoff_date",
     "label_start_date",
-    "label_end_date"
+    "label_end_date",
+    "style_window_start_date",
+    "style_window_end_date",
+    "style_window_type",
+    "style_obs_count",
+    "leakage_check_passed"
   ],
   "current_month_columns": [
     "current_mret",
@@ -64,8 +69,14 @@
     "delta_technology",
     "delta_bond_money",
     "delta_indirect_equity",
+    "nonstock_total_exposure",
+    "delta_nonstock_total_exposure",
+    "delta_sector_exposure",
     "style_deviation_score",
     "rolling_style_deviation_score",
+    "rolling_sector_deviation_score",
+    "rolling_cross_asset_deviation_score",
+    "rolling_action_deviation_score",
     "action_strength",
     "action_type",
     "cross_asset_execution_type",
@@ -78,21 +89,60 @@
     "holding_row_count",
     "beta_matched_holding_count",
     "non_individual_matched_holding_count",
-    "data_quality_flags"
+    "data_quality_flags",
+    "sector_energy_exposure",
+    "sector_materials_exposure",
+    "sector_industrials_exposure",
+    "sector_consumer_discretionary_exposure",
+    "sector_consumer_staples_exposure",
+    "sector_health_care_exposure",
+    "sector_financials_exposure",
+    "sector_information_technology_exposure",
+    "sector_communication_services_exposure",
+    "sector_utilities_exposure",
+    "sector_real_estate_exposure",
+    "delta_sector_energy",
+    "delta_sector_materials",
+    "delta_sector_industrials",
+    "delta_sector_consumer_discretionary",
+    "delta_sector_consumer_staples",
+    "delta_sector_health_care",
+    "delta_sector_financials",
+    "delta_sector_information_technology",
+    "delta_sector_communication_services",
+    "delta_sector_utilities",
+    "delta_sector_real_estate",
+    "sector_rotation_intensity"
   ],
   "future_label_columns": [
+    "future_3m_return",
+    "future_3m_sp500_return",
+    "future_3m_excess_return",
+    "future_3m_drawdown",
+    "direction_label_3m",
+    "outcome_5class_3m",
+    "label_positive_excess_3m",
+    "future_6m_return",
+    "future_6m_sp500_return",
+    "future_6m_excess_return",
+    "future_6m_drawdown",
+    "direction_label_6m",
+    "outcome_5class_6m",
+    "label_positive_excess_6m",
+    "future_9m_return",
+    "future_9m_sp500_return",
+    "future_9m_excess_return",
+    "future_9m_drawdown",
+    "direction_label_9m",
+    "outcome_5class_9m",
+    "label_positive_excess_9m",
     "future_12m_return",
     "future_12m_sp500_return",
     "future_12m_excess_return",
-    "future_drawdown",
-    "future_positive_excess",
-    "future_top_quartile",
-    "future_return_quantile",
-    "label_positive_excess_12m",
-    "label_positive_excess_4q",
-    "label_downside_control_12m",
-    "label_joint_good_12m",
-    "outcome_label"
+    "future_12m_drawdown",
+    "direction_label_12m",
+    "outcome_5class_12m",
+    "label_positive_excess_12m"
   ],
   "ml_numeric_columns": [
     "current_mret",
@@ -134,8 +184,14 @@
     "delta_technology",
     "delta_bond_money",
     "delta_indirect_equity",
+    "nonstock_total_exposure",
+    "delta_nonstock_total_exposure",
+    "delta_sector_exposure",
     "style_deviation_score",
     "rolling_style_deviation_score",
+    "rolling_sector_deviation_score",
+    "rolling_cross_asset_deviation_score",
+    "rolling_action_deviation_score",
     "action_strength",
     "manager_reliability_score",
     "manager_defensive_score",
@@ -143,7 +199,30 @@
     "manager_growth_tilt_score",
     "holding_row_count",
     "beta_matched_holding_count",
-    "non_individual_matched_holding_count"
+    "non_individual_matched_holding_count",
+    "sector_rotation_intensity",
+    "sector_energy_exposure",
+    "sector_materials_exposure",
+    "sector_industrials_exposure",
+    "sector_consumer_discretionary_exposure",
+    "sector_consumer_staples_exposure",
+    "sector_health_care_exposure",
+    "sector_financials_exposure",
+    "sector_information_technology_exposure",
+    "sector_communication_services_exposure",
+    "sector_utilities_exposure",
+    "sector_real_estate_exposure",
+    "delta_sector_energy",
+    "delta_sector_materials",
+    "delta_sector_industrials",
+    "delta_sector_consumer_discretionary",
+    "delta_sector_consumer_staples",
+    "delta_sector_health_care",
+    "delta_sector_financials",
+    "delta_sector_information_technology",
+    "delta_sector_communication_services",
+    "delta_sector_utilities",
+    "delta_sector_real_estate"
   ],
   "ml_categorical_columns": [
     "market_regime",
@@ -155,39 +234,78 @@
   ],
   "audit": {
     "rows": 65832,
-    "base_rows_before_horizon_expansion": 32916,
+    "base_rows_before_horizon_expansion": 65832,
     "combined_groundtruth": "data\\derived\\manager_action_groundtruth\\manager_action_ground_truth.csv",
     "combined_ml_dataset": "data\\derived\\prediction\\part6_prediction_dataset.csv",
     "ml_outputs": {
       "3": {
-        "groundtruth_view_path": "data\\derived\\manager_action_groundtruth\\manager_action_ground_truth_trailing3y_future12m.csv",
-        "ml_dataset_path": "data\\derived\\prediction\\part6_prediction_dataset_trailing3y_future12m.csv",
-        "rows": 30220
-      },
-      "5": {
-        "groundtruth_view_path": "data\\derived\\manager_action_groundtruth\\manager_action_ground_truth_trailing5y_future12m.csv",
-        "ml_dataset_path": "data\\derived\\prediction\\part6_prediction_dataset_trailing5y_future12m.csv",
-        "rows": 30220
+        "groundtruth_view_path": "data\\derived\\manager_action_groundtruth\\manager_action_ground_truth_trailing3y_multi_horizon.csv",
+        "ml_dataset_path": "data\\derived\\prediction\\part6_prediction_dataset_trailing3y_multi_horizon.csv",
+        "rows": 64372
       }
     },
-    "target": "label_positive_excess_12m",
-    "training_windows": [
-      3,
-      5
+    "targets": [
+      "future_3m_excess_return",
+      "future_6m_excess_return",
+      "future_9m_excess_return",
+      "future_12m_excess_return"
     ],
-    "future_months": 12,
+    "training_windows": [
+      3
+    ],
+    "prediction_horizons_months": [
+      3,
+      6,
+      9,
+      12
+    ],
+    "neutral_band": 0.005,
     "outcome_label_counts": {
       "negative_excess": 47042,
       "positive_excess": 11962,
       "missing_future_outcome": 5392,
       "positive_excess_high_drawdown": 1436
     },
-    "label_positive_excess_counts": {
-      "0.0": 47042,
-      "1.0": 13398
+    "direction_label_counts": {
+      "3": {
+        "-1.0": 39154,
+        "1.0": 18776,
+        "0.0": 6442
+      },
+      "6": {
+        "-1.0": 42758,
+        "1.0": 14692,
+        "0.0": 4934,
+        "NaN": 1988
+      },
+      "9": {
+        "-1.0": 43130,
+        "1.0": 13554,
+        "NaN": 3972,
+        "0.0": 3716
+      },
+      "12": {
+        "-1.0": 43974,
+        "1.0": 11232,
+        "NaN": 5916,
+        "0.0": 3250
+      }
     },
     "leakage_check_passed_counts": {
       "true": 65832
+    },
+    "style_window_type_counts": {
+      "strict_event_time_trailing_36m_manager_history_excluding_current_date": 65832
+    },
+    "style_obs_count_summary": {
+      "count": 65832.0,
+      "mean": 2342.3608579414267,
+      "std": 1883.4116411277228,
+      "min": 0.0,
+      "25%": 72.0,
+      "50%": 3262.0,
+      "75%": 3938.0,
+      "max": 4900.0
     },
     "ml_numeric_columns": [
       "current_mret",
@@ -229,8 +347,14 @@
       "delta_technology",
       "delta_bond_money",
       "delta_indirect_equity",
+      "nonstock_total_exposure",
+      "delta_nonstock_total_exposure",
+      "delta_sector_exposure",
       "style_deviation_score",
       "rolling_style_deviation_score",
+      "rolling_sector_deviation_score",
+      "rolling_cross_asset_deviation_score",
+      "rolling_action_deviation_score",
       "action_strength",
       "manager_reliability_score",
       "manager_defensive_score",
@@ -238,7 +362,30 @@
       "manager_growth_tilt_score",
       "holding_row_count",
       "beta_matched_holding_count",
-      "non_individual_matched_holding_count"
+      "non_individual_matched_holding_count",
+      "sector_rotation_intensity",
+      "sector_energy_exposure",
+      "sector_materials_exposure",
+      "sector_industrials_exposure",
+      "sector_consumer_discretionary_exposure",
+      "sector_consumer_staples_exposure",
+      "sector_health_care_exposure",
+      "sector_financials_exposure",
+      "sector_information_technology_exposure",
+      "sector_communication_services_exposure",
+      "sector_utilities_exposure",
+      "sector_real_estate_exposure",
+      "delta_sector_energy",
+      "delta_sector_materials",
+      "delta_sector_industrials",
+      "delta_sector_consumer_discretionary",
+      "delta_sector_consumer_staples",
+      "delta_sector_health_care",
+      "delta_sector_financials",
+      "delta_sector_information_technology",
+      "delta_sector_communication_services",
+      "delta_sector_utilities",
+      "delta_sector_real_estate"
     ],
     "ml_categorical_columns": [
       "market_regime",

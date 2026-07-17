@@ -291,7 +291,12 @@ const state = {
     mode: "backend",
     backendStatus: "idle",
     backendResult: null,
-    lastPayload: null
+    lastPayload: null,
+    horizonMonths: 12,
+    dateStart: "",
+    dateEnd: "",
+    dateDomain: null,
+    activeCluster: 0
   }
 };
 
@@ -328,13 +333,19 @@ function init() {
     "part6Section", "part6ModeSelect", "part6WindowSelect", "part6TargetSelect", "part6RefreshBtn", "part6Status",
     "runBackendAnalysisBtn", "backendAnalysisStatus", "backendAnalysisSummary",
     "part6FrontendContent", "part6BackendContent", "part7RunAnalysisBtn", "part7Status", "part7ExplanationWorkspace",
+    "part7EventSelect", "part7HorizonSelect", "part7ModelInput", "part7WebSearchInput", "part7QuestionInput", "part7RuntimeCards",
     "metricP6Rows", "metricP6Positive", "metricP6HighPositive", "metricP6AvgFuture",
     "part6BucketChart", "part6ScatterChart", "part6PortfolioChart",
     "part6PredictionRankChart", "part6ProbabilityHistogramChart", "part6ShapFeatureChart", "part6SingleEventShapChart",
     "part6CandidateTable", "part6BucketTable",
     "metricBackendPredictionCount", "metricBackendAvgProb", "metricBackendHighProb", "metricBackendTopProb",
     "part6PredictionRankChart", "part6ProbabilityHistogramChart", "part6StockActionChart", "part6ShapFeatureChart", "part6SingleEventShapChart",
-    "part6PredictionResultTable", "part6StockActionTable", "part6ShapResultTable"
+    "part6PredictionResultTable", "part6StockActionTable", "part6ShapResultTable",
+    "part6DateRangeLabel", "part6DateStartRange", "part6DateEndRange", "part6HorizonTabs",
+    "part6ClusterMap", "part6ClusterSummary", "part6FidelityHint", "part6FidelityShapChart", "part6FidelityRawChart",
+    "part6ShapEventSelect", "part6SelectAllShapEventsBtn", "part6ClearShapEventsBtn", "part6ShapSelectionHint",
+    "part6ExpertLatestCards", "part6ExpertAllocationChart", "part6ExpertRecommendationTable",
+    "part6ExpertManagerTable", "part6ExpertCaveat", "part6StockActionSummary"
   ].forEach(id => {
     dom[id] = document.getElementById(id);
   });
@@ -389,8 +400,38 @@ function init() {
     renderPart6();
   });
   if (dom.part6WindowSelect) dom.part6WindowSelect.addEventListener("change", renderPart6);
-  if (dom.part6TargetSelect) dom.part6TargetSelect.addEventListener("change", renderPart6);
+  if (dom.part6TargetSelect) dom.part6TargetSelect.addEventListener("change", () => {
+    state.part6.horizonMonths = Number(dom.part6TargetSelect.value) || 12;
+    syncPart6HorizonTabs();
+    if (state.part6.backendResult) runBackendAnalysis(); else renderPart6();
+  });
+  if (dom.part6HorizonTabs) dom.part6HorizonTabs.addEventListener("click", event => {
+    const button = event.target.closest("button[data-horizon]");
+    if (!button) return;
+    state.part6.horizonMonths = Number(button.dataset.horizon) || 12;
+    if (dom.part6TargetSelect) dom.part6TargetSelect.value = String(state.part6.horizonMonths);
+    syncPart6HorizonTabs();
+    if (state.part6.backendResult) runBackendAnalysis(); else renderPart6();
+  });
+  [dom.part6DateStartRange, dom.part6DateEndRange].forEach(input => {
+    if (!input) return;
+    input.addEventListener("input", updatePart6DateRangeFromControls);
+    input.addEventListener("change", () => { updatePart6DateRangeFromControls(); if (state.part6.backendResult) runBackendAnalysis(); });
+  });
+  if (dom.part6ShapEventSelect) dom.part6ShapEventSelect.addEventListener("change", () => {
+    part6ApplyShapEventSelection();
+  });
+  if (dom.part6SelectAllShapEventsBtn) dom.part6SelectAllShapEventsBtn.addEventListener("click", () => {
+    Array.from(dom.part6ShapEventSelect.options).forEach((option, index) => { option.selected = index < 8; });
+    part6ApplyShapEventSelection();
+  });
+  if (dom.part6ClearShapEventsBtn) dom.part6ClearShapEventsBtn.addEventListener("click", () => {
+    Array.from(dom.part6ShapEventSelect.options).forEach((option, index) => { option.selected = index === 0; });
+    part6ApplyShapEventSelection();
+  });
   if (dom.part7RunAnalysisBtn) dom.part7RunAnalysisBtn.addEventListener("click", runPart7AnalysisPlaceholder);
+  loadPart7Status();
+  part7PopulateEvents();
 
   document.querySelectorAll("input[name='horizon']").forEach(input => {
     input.addEventListener("change", () => {
@@ -4301,11 +4342,11 @@ function renderPart6() {
   dom.part6Section.classList.remove("hidden");
   state.part6.mode = dom.part6ModeSelect ? (dom.part6ModeSelect.value || "backend") : (state.part6.mode || "backend");
   if (dom.part6WindowSelect) dom.part6WindowSelect.value = "y3";
-  if (dom.part6TargetSelect) dom.part6TargetSelect.value = "future12m";
+  if (dom.part6TargetSelect && !dom.part6TargetSelect.value) dom.part6TargetSelect.value = String(state.part6.horizonMonths || 12);
   if (dom.part6FrontendContent) dom.part6FrontendContent.classList.add("hidden");
   if (dom.part6BackendContent) dom.part6BackendContent.classList.remove("hidden");
   clearPart6FrontendView();
-  renderPart6BackendMode("y3", "future12m");
+  renderPart6BackendMode("y3", `future${state.part6.horizonMonths || 12}m`);
 }
 
 function clearPart6FrontendView() {
@@ -5130,11 +5171,11 @@ function backendFeatureContext() {
     horizon_title: "Trailing 3年",
     training_window_years: 3,
     training_window_months: 36,
-    target: "label_positive_excess_12m",
-    target_horizon_months: 12,
+    targets: ["future_3m_excess_return", "future_6m_excess_return", "future_9m_excess_return", "future_12m_excess_return"],
+    target_horizon_months: state.part6.horizonMonths || 12,
     current_month_feature_keys: ["current_mret", "current_sp500_ret", "current_excess_ret", "current_net_flow", "current_mtna", "current_exp_ratio", "current_mgmt_fee", "current_turn_ratio", "current_age", "current_tenure"],
     trailing_feature_keys: ["fund_trailing_return", "sp500_trailing_return", "fund_trailing_excess_return", "fund_trailing_period_return", "fund_trailing_max_drawdown", "fund_trailing_beta_vs_sp500", "trailing_avg_net_flow", "trailing_sum_net_flow", "trailing_avg_mtna", "trailing_avg_exp_ratio", "trailing_avg_mgmt_fee", "trailing_avg_turn_ratio", "trailing_avg_age", "trailing_avg_tenure"],
-    action_feature_keys: ["stock_allocation", "bond_allocation", "cash_allocation", "portfolio_beta", "technology_exposure", "bond_money_exposure", "indirect_equity_exposure", "delta_stock", "delta_beta", "delta_technology", "delta_bond_money", "delta_indirect_equity", "rolling_style_deviation_score"]
+    action_feature_keys: ["stock_allocation", "bond_allocation", "cash_allocation", "portfolio_beta", "technology_exposure", "bond_money_exposure", "indirect_equity_exposure", "delta_stock", "delta_beta", "delta_technology", "delta_bond_money", "delta_indirect_equity", "delta_nonstock_total_exposure", "delta_sector_exposure", "rolling_style_deviation_score", "rolling_sector_deviation_score", "rolling_cross_asset_deviation_score", "rolling_action_deviation_score"]
   };
 }
 
@@ -5180,7 +5221,10 @@ function buildVisualStatePayload() {
       backend_feature_context: featureContext,
       mode: state.part6.mode || "backend",
       window: "y3",
-      target: "future12m",
+      target: `future${state.part6.horizonMonths || 12}m`,
+      horizon_months: state.part6.horizonMonths || 12,
+      date_start: state.part6.dateStart || null,
+      date_end: state.part6.dateEnd || null,
       candidates: []
     }
   };
@@ -5208,12 +5252,20 @@ async function runBackendAnalysis() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const result = await response.json();
     console.log("Backend analysis result:", result);
-    state.part6.backendStatus = "done";
+    const hasPredictions = Boolean(result && result.ml_result && Array.isArray(result.ml_result.predictions) && result.ml_result.predictions.length);
+    const backendWarnings = Array.isArray(result && result.warnings) ? result.warnings.filter(Boolean) : [];
+    state.part6.backendStatus = hasPredictions ? "done" : "error";
     state.part6.backendResult = result;
-    dom.backendAnalysisStatus.className = "inline-status backend-status success";
-    dom.backendAnalysisStatus.textContent = result.message || "後端已收到並解析 visual state。";
+    dom.backendAnalysisStatus.className = hasPredictions
+      ? `inline-status backend-status ${backendWarnings.length ? "warning" : "success"}`
+      : "inline-status backend-status error";
+    dom.backendAnalysisStatus.textContent = [
+      result.message || "後端已收到並解析 visual state。",
+      ...backendWarnings
+    ].join(" ");
     renderBackendAnalysisSummary(result);
     renderPart6();
+    part7PopulateEvents();
   } catch (error) {
     state.part6.backendStatus = "error";
     dom.backendAnalysisStatus.className = "inline-status backend-status error";
@@ -5238,16 +5290,16 @@ function renderBackendAnalysisSummary(result) {
     rows.push({ section: "ml", field: "model_path", value: ml.model_path || "" });
     rows.push({ section: "ml", field: "feature_count", value: ml.feature_count || "" });
     ml.predictions.slice(0, 20).forEach((p, i) => {
-      rows.push({ section: "prediction", field: `${i + 1}. ${p.manager || ""} ${p.report_date || ""}`, value: `prob=${formatNumber(p.prediction_probability, 3)} event=${p.event_id || ""}` });
+      const h = state.part6.horizonMonths || 12;
+      rows.push({ section: "prediction", field: `${i + 1}. ${p.manager || ""} ${p.report_date || ""}`, value: `prob=${formatNumber(p[`positive_probability_${h}m`], 3)} class=${p[`predicted_class_${h}m`] || ""}` });
     });
   }
   const shap = result && result.shap_result ? result.shap_result : null;
   if (shap && Array.isArray(shap.explanations)) {
     rows.push({ section: "shap", field: "explanation_count", value: shap.explanations.length });
     shap.explanations.slice(0, 10).forEach((e, i) => {
-      const pos = (e.top_positive || []).slice(0, 3).map(x => `${x.feature}:${formatNumber(x.contribution, 3)}`).join("; ");
-      const neg = (e.top_negative || []).slice(0, 3).map(x => `${x.feature}:${formatNumber(x.contribution, 3)}`).join("; ");
-      rows.push({ section: "shap", field: `${i + 1}. ${e.event_id || "event"}`, value: `+ ${pos} | - ${neg}` });
+      const top = (e.features || []).slice(0, 4).map(x => `${x.feature}:${formatNumber(x.contribution, 3)}`).join("; ");
+      rows.push({ section: "shap", field: `${i + 1}. ${e.event_id || "event"} ${e.horizon_months || ""}M`, value: top });
     });
   }
   if (result && result.warnings && result.warnings.length) {
@@ -5257,7 +5309,7 @@ function renderBackendAnalysisSummary(result) {
     { key: "section", label: "Section" },
     { key: "field", label: "Field" },
     { key: "value", label: "Value" }
-  ], { title: "Run Backend Analysis：raw 3Y ML / SHAP response summary", expanded: false, count: rows.length });
+  ], { title: "Backend：四天期模型與 TreeSHAP 回應摘要", expanded: false, count: rows.length });
 }
 
 function asPercentPoint(value) {
@@ -5358,6 +5410,496 @@ function renderPart6BackendVisuals(result) {
   drawPart6SingleEventShapChart(shapRows);
   renderPart6BackendTables(predictions, shapRows, shapAgg, stockActionRows);
 }
+
+/* Part7 only: evidence-grounded critic over persisted Part1–Part6 evidence. */
+async function loadPart7Status() {
+  if (!dom.part7Status) return;
+  try {
+    const response = await fetch('/api/part7/status');
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const info = await response.json();
+    const modeText = info.mode === 'live' ? 'Live API mode' : 'Preview mode（不會呼叫 API）';
+    dom.part7Status.textContent = `${modeText} · model=${info.default_model || '-'} · local documents=${info.local_document_count || 0} · API key=${info.api_key_configured ? 'configured' : 'not configured'} · openai package=${info.openai_package_available ? 'ready' : 'not installed'}`;
+    if (dom.part7ModelInput && info.default_model) dom.part7ModelInput.value = info.default_model;
+    renderPart7RuntimeCards(info);
+  } catch (error) {
+    dom.part7Status.textContent = `Part7 status 無法取得：${error.message}`;
+  }
+}
+
+function renderPart7RuntimeCards(info) {
+  if (!dom.part7RuntimeCards) return;
+  const cards = [
+    ['執行模式', info.mode || '-'],
+    ['API Key', info.api_key_configured ? '已在 backend 設定' : '尚未設定'],
+    ['Local RAG 文件', String(info.local_document_count ?? '-')],
+    ['模型', info.default_model || info.model || '-']
+  ];
+  dom.part7RuntimeCards.innerHTML = cards.map(([label, value]) => `<div class="part7-runtime-card"><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></div>`).join('');
+}
+
+function part7PopulateEvents(preferredIds = []) {
+  if (!dom.part7EventSelect) return;
+  const current = Array.from(dom.part7EventSelect.selectedOptions || []).map(option => option.value).filter(Boolean);
+  const predictions = ((((state.part6 || {}).backendResult || {}).ml_result || {}).predictions) || [];
+  const validIds = new Set(predictions.map(row => String(row.event_id || '')));
+  let selected = preferredIds.length ? preferredIds.filter(id => validIds.has(id)).slice(0, 8) : current.filter(id => validIds.has(id));
+  const part6Selected = preferredIds.length ? preferredIds : (typeof part6SelectedShapEventIds === 'function' ? part6SelectedShapEventIds() : []);
+  if (!selected.length) selected = part6Selected.filter(id => validIds.has(id)).slice(0, 8);
+  const options = ['<option value="">自動選擇最高機率事件</option>'];
+  for (const row of predictions) {
+    const label = `${row.report_date || '-'} | ${row.manager || '-'} | ${row.fund_ticker || row.crsp_portno || '-'} | ${row.action_type || '-'}`;
+    const id = String(row.event_id || '');
+    options.push(`<option value="${escapeHtml(id)}"${selected.includes(id) ? ' selected' : ''}>${escapeHtml(label)}</option>`);
+  }
+  dom.part7EventSelect.innerHTML = options.join('');
+}
+
+function part7EvidenceBadges(ids) {
+  return (ids || []).map(id => `<span class="part7-evidence-id">${escapeHtml(id)}</span>`).join('');
+}
+
+function part7SafeUrl(value) {
+  try {
+    const url = new URL(String(value || ''), window.location.origin);
+    return (url.protocol === 'https:' || url.protocol === 'http:') ? url.href : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+function part7RenderAssessments(title, items, className) {
+  const body = (items || []).length ? items.map(item => `
+    <div class="part7-item">
+      <strong>${escapeHtml(item.claim || item.risk || '')}</strong> ${part7EvidenceBadges(item.evidence_ids)}
+      <div>${escapeHtml(item.reasoning || item.why_it_matters || '')}</div>
+      ${item.strength ? `<small>strength: ${escapeHtml(item.strength)}</small>` : ''}
+      ${item.recommended_check ? `<small>建議檢查：${escapeHtml(item.recommended_check)}</small>` : ''}
+    </div>`).join('') : '<p>沒有足夠證據產生此項目。</p>';
+  return `<section class="part7-critic-section ${className}"><h3>${escapeHtml(title)}</h3>${body}</section>`;
+}
+
+function part7RenderEvidence(evidence) {
+  const rows = (evidence || []).map(item => ({
+    evidence_id: item.evidence_id,
+    type: item.type,
+    date: item.date,
+    title: item.title,
+    source: item.source,
+    retrieval_score: item.retrieval_score,
+    excerpt: String(item.text || '').slice(0, 420)
+  }));
+  return rows.length ? `<section class="part7-critic-section"><h3>RAG retrieved evidence</h3><div id="part7EvidenceTable"></div></section>` : '';
+}
+
+function part7RenderResult(result) {
+  if (!dom.part7ExplanationWorkspace) return;
+  const event = result.event || {};
+  const events = Array.isArray(result.events) && result.events.length ? result.events : (event.event_id ? [event] : []);
+  const analysis = result.analysis;
+  const probability = Number(event.positive_probability);
+  let html = `<div class="part7-verdict-grid">
+    <div class="part7-verdict-card"><small>事件數</small><strong>${events.length || 0}</strong></div>
+    <div class="part7-verdict-card"><small>經理人</small><strong>${escapeHtml([...new Set(events.map(item => item.manager).filter(Boolean))].join('；') || '-')}</strong></div>
+    <div class="part7-verdict-card"><small>報告日／天期</small><strong>${escapeHtml(event.report_date || '-')} / ${escapeHtml(event.horizon_months || '-')}M</strong></div>
+    <div class="part7-verdict-card"><small>Part6 positive probability</small><strong>${Number.isFinite(probability) ? formatPct(probability) : '-'}</strong></div>
+  </div>`;
+  if (events.length) html += `<section class="part7-critic-section"><h3>Selected Part6 events</h3>${events.map(item => `<div class="part7-item"><strong>${escapeHtml(item.manager || '-')} | ${escapeHtml(item.report_date || '-')}</strong><div>${escapeHtml(item.event_id || '')} · ${escapeHtml(item.action_type || '-')} · positive probability ${Number.isFinite(Number(item.positive_probability)) ? formatPct(Number(item.positive_probability)) : '-'}</div></div>`).join('')}</section>`;
+
+  if (analysis) {
+    const confidence = Number(analysis.confidence);
+    html += `<section class="part7-critic-section"><h3>Critic conclusion</h3>
+      <p><strong>${escapeHtml(analysis.verdict || 'unknown')}</strong> · confidence ${Number.isFinite(confidence) ? formatPct(confidence) : '-'}</p>
+      <p>${escapeHtml(analysis.executive_summary || '')}</p><p><strong>Model claim：</strong>${escapeHtml(analysis.model_claim || '')}</p></section>`;
+    html += part7RenderAssessments('支持模型解釋的證據', analysis.supporting_evidence, 'part7-support');
+    html += part7RenderAssessments('反證與替代解釋', analysis.counter_evidence, 'part7-counter');
+    html += part7RenderAssessments('Structural breaks', analysis.structural_breaks, 'part7-risk');
+    html += part7RenderAssessments('資料限制', analysis.data_limitations, 'part7-risk');
+    html += part7RenderAssessments('過度解釋風險', analysis.overinterpretation_risks, 'part7-risk');
+    const questions = (analysis.questions_for_human || []).map(q => `<li>${escapeHtml(q)}</li>`).join('');
+    html += `<section class="part7-critic-section"><h3>交由專家判斷的問題</h3><ol>${questions || '<li>無</li>'}</ol></section>`;
+  } else {
+    html += `<section class="part7-critic-section"><h3>Preview ready</h3><p>${escapeHtml(result.message || '')}</p><p>此結果沒有呼叫模型；可先檢查下方 RAG evidence 與 prompt。</p></section>`;
+  }
+
+  html += part7RenderEvidence(result.retrieved_evidence);
+  const allCitations = [...((analysis || {}).citations || []), ...(result.web_citations || [])];
+  if (allCitations.length) {
+    html += `<section class="part7-critic-section part7-citations"><h3>Citations</h3><ul>${allCitations.map(c => {
+      const title = c.title || c.evidence_id || c.url || 'source';
+      const safeUrl = part7SafeUrl(c.url);
+      return safeUrl ? `<li>${escapeHtml(c.evidence_id || '')} <a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener">${escapeHtml(title)}</a></li>` : `<li>${escapeHtml(c.evidence_id || '')} ${escapeHtml(title)} · ${escapeHtml(c.source || '')}</li>`;
+    }).join('')}</ul></section>`;
+  }
+  if (result.prompt_preview) {
+    html += `<details class="part7-critic-section part7-prompt-preview" open><summary><strong>實際 Prompt Preview</strong></summary><h4>Instructions</h4><pre>${escapeHtml(result.prompt_preview.instructions || '')}</pre><h4>Input + retrieved context</h4><pre>${escapeHtml(result.prompt_preview.input || '')}</pre></details>`;
+  }
+  dom.part7ExplanationWorkspace.innerHTML = html;
+  const evidenceRows = (result.retrieved_evidence || []).map(item => ({
+    evidence_id: item.evidence_id, type: item.type, date: item.date, title: item.title,
+    source: item.source, retrieval_score: item.retrieval_score,
+    excerpt: String(item.text || '').slice(0, 420)
+  }));
+  renderTable('part7EvidenceTable', evidenceRows, [
+    { key: 'evidence_id', label: 'ID' }, { key: 'type', label: 'type' }, { key: 'date', label: 'date' },
+    { key: 'title', label: 'title' }, { key: 'source', label: 'source' },
+    { key: 'retrieval_score', label: 'score', format: 'num' }, { key: 'excerpt', label: 'excerpt' }
+  ], { title: 'Part7 evidence audit trail', expanded: true, count: evidenceRows.length });
+}
+
+async function runPart7AnalysisPlaceholder() {
+  part7PopulateEvents();
+  if (!dom.part7RunAnalysisBtn || !dom.part7Status) return;
+  dom.part7RunAnalysisBtn.disabled = true;
+  dom.part7Status.textContent = 'Part7 正在建立 evidence IDs、執行 local RAG，並準備 critic request…';
+  try {
+    const payload = {
+      event_ids: dom.part7EventSelect ? Array.from(dom.part7EventSelect.selectedOptions).map(option => option.value).filter(Boolean).slice(0, 8) : [],
+      horizon_months: Number(dom.part7HorizonSelect ? dom.part7HorizonSelect.value : 12),
+      model: dom.part7ModelInput ? (dom.part7ModelInput.value.trim() || null) : null,
+      use_web_search: Boolean(dom.part7WebSearchInput && dom.part7WebSearchInput.checked),
+      max_local_chunks: 12,
+      question: dom.part7QuestionInput ? (dom.part7QuestionInput.value.trim() || null) : null
+    };
+    const response = await fetch('/api/part7/critic', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.detail || `HTTP ${response.status}`);
+    dom.part7Status.textContent = result.status === 'preview'
+      ? 'Preview 完成：尚未呼叫 OpenAI；已產生 RAG evidence 與 prompt。'
+      : `Critic 完成 · response_id=${result.response_id || '-'}`;
+    renderPart7RuntimeCards({ mode: result.status, api_key_configured: result.status === 'ok', local_document_count: (result.retrieval || {}).local_documents_available, default_model: result.model });
+    part7RenderResult(result);
+  } catch (error) {
+    dom.part7Status.textContent = `Part7 執行失敗：${error.message}`;
+  } finally {
+    dom.part7RunAnalysisBtn.disabled = false;
+  }
+}
+
+function renderPart6ExpertCollaboration(result) {
+  const expert = result && result.expert_collaboration ? result.expert_collaboration : null;
+  const recommendations = expert && Array.isArray(expert.recommendations) ? expert.recommendations : [];
+  const managers = expert && Array.isArray(expert.manager_contributions) ? expert.manager_contributions : [];
+  const latest = expert && expert.latest_recommendation ? expert.latest_recommendation : null;
+  if (dom.part6ExpertLatestCards) {
+    dom.part6ExpertLatestCards.innerHTML = latest ? `
+      <div class="part6-anchor-card emphasis"><span>建議日期</span><strong>${escapeHtml(latest.report_date || '-')}</strong><p>${formatInt(latest.expert_count || 0)} 位平衡型基金專家</p></div>
+      <div class="part6-anchor-card"><span>純專家共識</span><strong>股 ${escapeHtml(formatPct(latest.expert_stock))}｜債 ${escapeHtml(formatPct(latest.expert_bond))}</strong><p>現金 ${escapeHtml(formatPct(latest.expert_cash))}</p></div>
+      <div class="part6-anchor-card"><span>專家 × AI 建議</span><strong>股 ${escapeHtml(formatPct(latest.human_ai_stock))}｜債 ${escapeHtml(formatPct(latest.human_ai_bond))}</strong><p>現金 ${escapeHtml(formatPct(latest.human_ai_cash))}</p></div>
+      <div class="part6-anchor-card"><span>${state.part6.horizonMonths || 12}M 初步比較</span><strong>Human–AI ${Number.isFinite(Number(latest.human_ai_outcome_proxy)) ? escapeHtml(formatPct(Number(latest.human_ai_outcome_proxy))) : '-'}</strong><p>AI-only ${Number.isFinite(Number(latest.ai_outcome_proxy)) ? escapeHtml(formatPct(Number(latest.ai_outcome_proxy))) : '-'}｜${escapeHtml(latest.validation_status || '-')}</p></div>
+    ` : '<div class="part6-backend-empty-window">目前選取事件不足以建立專家股債配置共識。</div>';
+  }
+  if (dom.part6ExpertAllocationChart && window.Plotly) {
+    if (!recommendations.length) {
+      Plotly.react(dom.part6ExpertAllocationChart, [], { title: '平衡型基金專家 × AI 配置（無資料）', height: 380 }, { responsive: true });
+    } else {
+      Plotly.react(dom.part6ExpertAllocationChart, [
+        { type: 'scatter', mode: 'lines+markers', name: '純專家：股票', x: recommendations.map(r => r.report_date), y: recommendations.map(r => r.expert_stock), line: { color: '#2187d5', width: 3 } },
+        { type: 'scatter', mode: 'lines+markers', name: '純 AI：股票', x: recommendations.map(r => r.report_date), y: recommendations.map(r => r.ai_stock), line: { color: '#805ad5', width: 2 } },
+        { type: 'scatter', mode: 'lines+markers', name: '專家×AI：股票', x: recommendations.map(r => r.report_date), y: recommendations.map(r => r.human_ai_stock), line: { color: '#1f9d8a', width: 3 } },
+        { type: 'scatter', mode: 'lines+markers', name: '等權：股票', x: recommendations.map(r => r.report_date), y: recommendations.map(r => r.equal_weight_stock), line: { color: '#7b8790', dash: 'dot' } },
+        { type: 'scatter', mode: 'lines+markers', name: '專家×AI：債券', x: recommendations.map(r => r.report_date), y: recommendations.map(r => r.human_ai_bond), line: { color: '#f0a44b', width: 2 } }
+      ], {
+        title: `平衡型基金專家集體智慧與 Human–AI 動態配置（${expert.horizon_months || state.part6.horizonMonths}M）`,
+        height: 460, margin: { l: 65, r: 30, t: 68, b: 70 },
+        xaxis: { title: 'T-1 holdings report date', tickangle: -35 },
+        yaxis: { title: '建議配置比例', tickformat: '.0%', range: [0, 1] },
+        legend: { orientation: 'h', y: -0.28 }, hovermode: 'x unified'
+      }, { displaylogo: false, responsive: true });
+    }
+  }
+  renderTable('part6ExpertRecommendationTable', recommendations, [
+    { key: 'report_date', label: 'T-1 report date' }, { key: 'expert_count', label: '專家數' },
+    { key: 'expert_stock', label: '專家股票', format: 'pct' }, { key: 'expert_bond', label: '專家債券', format: 'pct' },
+    { key: 'ai_stock', label: 'AI-only 股票', format: 'pct' }, { key: 'ai_bond', label: 'AI-only 債券', format: 'pct' },
+    { key: 'human_ai_stock', label: '專家×AI 股票', format: 'pct' }, { key: 'human_ai_bond', label: '專家×AI 債券', format: 'pct' },
+    { key: 'human_ai_cash', label: '專家×AI 現金', format: 'pct' }, { key: 'equal_weight_stock', label: '等權股票', format: 'pct' },
+    { key: 'ai_outcome_proxy', label: 'AI-only outcome', format: 'pct' }, { key: 'expert_outcome_proxy', label: '專家 outcome', format: 'pct' },
+    { key: 'human_ai_outcome_proxy', label: 'Human–AI outcome', format: 'pct' }, { key: 'equal_weight_outcome_proxy', label: '等權 outcome', format: 'pct' },
+    { key: 'validation_status', label: '驗證狀態' }
+  ], { title: '各期專家共識配置（全部期間）', expanded: true, count: recommendations.length });
+  renderTable('part6ExpertManagerTable', managers, [
+    { key: 'report_date', label: 'report date' }, { key: 'manager', label: '經理人' }, { key: 'fund_ticker', label: '基金' },
+    { key: 'style_group', label: '同風格群組' }, { key: 'sharpe', label: 'Sharpe', format: 'num' },
+    { key: 'information_ratio', label: 'Information Ratio', format: 'num' }, { key: 'alpha', label: 'Alpha', format: 'pct' },
+    { key: 'performance_score', label: '專家績效分數', format: 'num' }, { key: 'relative_style_score', label: '同風格相對分數', format: 'num' },
+    { key: 'expert_weight', label: '專家權重', format: 'pct' }, { key: 'ai_positive_probability', label: 'AI 正向機率', format: 'pct' }, { key: 'ai_weight', label: 'AI-only 權重', format: 'pct' },
+    { key: 'human_ai_weight', label: 'Human–AI 權重', format: 'pct' }, { key: 'stock_allocation', label: '股票配置', format: 'pct' },
+    { key: 'bond_allocation', label: '債券配置', format: 'pct' }, { key: 'cash_allocation', label: '現金配置', format: 'pct' }
+  ], { title: '經理人專家權重與股債配置貢獻（全部列出）', expanded: true, count: managers.length });
+  if (dom.part6ExpertCaveat) dom.part6ExpertCaveat.textContent = expert ? expert.research_caveat : '尚無專家協作結果。';
+}
+
+function part6AllStockActionRows(predictions) {
+  const rows = part6StockActionRowsForDisplay(predictions);
+  const managerMap = (((state.part6.backendResult || {}).expert_collaboration || {}).report_manager_map) || {};
+  return rows.map(row => ({
+    ...row,
+    manager: row.manager || managerMap[part6PredictionKey(row.crsp_portno, row.report_dt)] || 'Unknown manager'
+  })).sort((a, b) => String(b.report_dt).localeCompare(String(a.report_dt)) || String(a.manager).localeCompare(String(b.manager)) || (b.signed_delta_abs || 0) - (a.signed_delta_abs || 0));
+}
+
+function drawPart6AllStockActionChart(rows) {
+  const node = dom.part6StockActionChart;
+  if (!node || !window.Plotly) return;
+  const data = (rows || []).filter(row => row.stock_action_direction).slice().reverse();
+  const managerCount = new Set(data.map(row => row.manager).filter(Boolean)).size;
+  const counts = { new_position: 0, increase: 0, decrease: 0 };
+  data.forEach(row => { if (Object.prototype.hasOwnProperty.call(counts, row.stock_action_direction)) counts[row.stock_action_direction] += 1; });
+  if (dom.part6StockActionSummary) dom.part6StockActionSummary.textContent = `共 ${data.length} 筆｜${managerCount} 位經理人｜新增 ${counts.new_position}｜加碼 ${counts.increase}｜減碼 ${counts.decrease}（全部顯示）`;
+  if (!data.length) {
+    Plotly.react(node, [], { title: 'Part 5 真實持股動作（尚無可對齊資料）', height: 400 }, { responsive: true });
+    return;
+  }
+  Plotly.react(node, [{
+    type: 'bar', orientation: 'h', x: data.map(row => row.delta_holding_pct),
+    y: data.map(row => `${row.manager}｜${row.holding_ticker || row.holding_key}｜${row.report_dt}`),
+    text: data.map(row => row.stock_action_direction === 'decrease' ? '減碼' : (row.stock_action_direction === 'new_position' ? '新增' : '加碼')),
+    marker: { color: data.map(row => row.stock_action_direction === 'decrease' ? '#c94c4c' : (row.stock_action_direction === 'new_position' ? '#2187d5' : '#1f9d8a')) },
+    customdata: data.map(row => [row.manager, row.fund_ticker || row.crsp_portno, row.holding_security_name, row.sector, row.previous_holding_pct, row.current_holding_pct, row.stock_action_direction, row.prediction_probability]),
+    hovertemplate: '經理人：%{customdata[0]}<br>基金：%{customdata[1]}<br>標的：%{customdata[2]}<br>Sector：%{customdata[3]}<br>動作：%{customdata[6]}<br>前期權重：%{customdata[4]:.2%}<br>本期權重：%{customdata[5]:.2%}<br>變化：%{x:.2%}<br>AI 正向機率：%{customdata[7]:.1%}<extra></extra>'
+  }], {
+    title: `Part 6：全部真實新增／加碼／減碼（${data.length} 筆，含經理人）`,
+    height: Math.max(520, 180 + data.length * 24), margin: { l: 330, r: 40, t: 72, b: 60 },
+    xaxis: { title: '持股權重變化：負值＝減碼，正值＝新增／加碼', tickformat: '.1%', zeroline: true },
+    yaxis: { automargin: true }, showlegend: false
+  }, { displaylogo: false, responsive: true });
+}
+
+function renderPart6AllStockActionTable(rows) {
+  renderTable('part6StockActionTable', rows || [], [
+    { key: 'manager', label: '經理人' }, { key: 'report_dt', label: '報告日' }, { key: 'previous_report_dt', label: '前期報告日' },
+    { key: 'fund_ticker', label: '基金' }, { key: 'fund_name', label: '基金名稱' }, { key: 'holding_ticker', label: 'ticker' },
+    { key: 'holding_security_name', label: '持有標的' }, { key: 'sector', label: '產業' },
+    { key: 'stock_action_direction', label: '真實動作' }, { key: 'previous_holding_pct', label: '前期權重', format: 'pct' },
+    { key: 'current_holding_pct', label: '本期權重', format: 'pct' }, { key: 'delta_holding_pct', label: '權重變化', format: 'pct' },
+    { key: 'stock_beta', label: 'Beta', format: 'num' }, { key: 'prediction_probability', label: 'AI 正向機率', format: 'pct' },
+    { key: 'model_action_type', label: '模型事件類型' }, { key: 'market_regime', label: '市場狀態' }
+  ], { title: 'Part 5 選取事件之全部持股動作（含經理人）', expanded: true, count: (rows || []).length });
+}
+
+/* Multi-horizon diagnostic layer. These late declarations intentionally replace
+   the legacy 12M-only adapters while keeping Part 1–5 untouched. */
+function syncPart6HorizonTabs() {
+  const selected = Number(state.part6.horizonMonths) || 12;
+  document.querySelectorAll('#part6HorizonTabs button[data-horizon]').forEach(button => {
+    button.classList.toggle('active', Number(button.dataset.horizon) === selected);
+  });
+}
+
+function part6DayNumber(value) {
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? Math.floor(time / 86400000) : NaN;
+}
+
+function part6DayIso(day) {
+  return new Date(Number(day) * 86400000).toISOString().slice(0, 10);
+}
+
+function configurePart6DateDomain(domain) {
+  if (!domain || !domain.min || !domain.max || !dom.part6DateStartRange || !dom.part6DateEndRange) return;
+  const min = part6DayNumber(domain.min), max = part6DayNumber(domain.max);
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return;
+  state.part6.dateDomain = { min: domain.min, max: domain.max };
+  [dom.part6DateStartRange, dom.part6DateEndRange].forEach(input => { input.min = String(min); input.max = String(max); });
+  dom.part6DateStartRange.value = String(state.part6.dateStart ? part6DayNumber(state.part6.dateStart) : min);
+  dom.part6DateEndRange.value = String(state.part6.dateEnd ? part6DayNumber(state.part6.dateEnd) : max);
+  updatePart6DateRangeFromControls();
+}
+
+function updatePart6DateRangeFromControls() {
+  if (!dom.part6DateStartRange || !dom.part6DateEndRange) return;
+  let start = Number(dom.part6DateStartRange.value), end = Number(dom.part6DateEndRange.value);
+  if (start > end) {
+    const active = document.activeElement;
+    if (active === dom.part6DateStartRange) end = start; else start = end;
+    dom.part6DateStartRange.value = String(start); dom.part6DateEndRange.value = String(end);
+  }
+  state.part6.dateStart = part6DayIso(start); state.part6.dateEnd = part6DayIso(end);
+  if (dom.part6DateRangeLabel) dom.part6DateRangeLabel.textContent = `${state.part6.dateStart} ～ ${state.part6.dateEnd}`;
+}
+
+function backendPredictions(result) {
+  const horizon = Number(state.part6.horizonMonths) || 12;
+  const preds = result && result.ml_result && Array.isArray(result.ml_result.predictions) ? result.ml_result.predictions : [];
+  return preds.map((p, i) => ({
+    ...p,
+    rank: i + 1,
+    horizon_months: horizon,
+    prediction_probability: Number(p[`positive_probability_${horizon}m`]),
+    predicted_excess: Number(p[`predicted_excess_${horizon}m`]),
+    predicted_class: p[`predicted_class_${horizon}m`],
+    future_horizon_excess_return: p[`future_${horizon}m_excess_return`],
+    future_12m_excess_return: p[`future_${horizon}m_excess_return`],
+    label_positive_excess_12m: p[`outcome_5class_${horizon}m`],
+    event_label: `${p.manager || 'Unknown manager'} | ${p.report_date || ''}`,
+    short_label: `${i + 1}. ${(p.manager || 'Unknown').slice(0, 18)} ${p.report_date || ''}`
+  })).filter(p => Number.isFinite(p.prediction_probability));
+}
+
+function backendShapRows(result) {
+  const horizon = Number(state.part6.horizonMonths) || 12;
+  const explanations = result && result.shap_result && Array.isArray(result.shap_result.explanations) ? result.shap_result.explanations : [];
+  const rows = [];
+  explanations.filter(event => Number(event.horizon_months) === horizon).forEach((event, eventIndex) => {
+    const eventLabel = `${event.manager || 'Unknown manager'} | ${event.report_date || ''}`;
+    (event.features || []).forEach(item => rows.push({
+      event_index: eventIndex, event_id: event.event_id, event_label: eventLabel,
+      manager: event.manager, fund: event.fund, report_date: event.report_date,
+      horizon_months: horizon, direction: Number(item.contribution) >= 0 ? 'positive' : 'negative',
+      feature: item.feature, value: item.value, contribution: Number(item.contribution)
+    }));
+  });
+  return rows.filter(row => Number.isFinite(row.contribution));
+}
+
+function drawPart6ClusterMap(result) {
+  const node = dom.part6ClusterMap;
+  if (!node || !window.Plotly) return;
+  const temporal = result && result.shap_result ? result.shap_result.temporal_clustering : null;
+  const clusters = temporal && Array.isArray(temporal.clusters) ? temporal.clusters : [];
+  const points = temporal && Array.isArray(temporal.points) ? temporal.points : [];
+  if (!points.length) { Plotly.react(node, [], { title: 'TreeSHAP 決策邏輯聚類（資料不足）', height: 460 }, { responsive: true }); return; }
+  const clusterMap = new Map(clusters.map(c => [Number(c.cluster), c]));
+  const predictionStyleMap = new Map(((((result || {}).ml_result || {}).predictions) || []).map(p => [String(p.event_id || ''), p.manager_style_group || 'Unknown style']));
+  const styleColors = {
+    'Defensive / risk-control style': '#2f6b9a',
+    'High-return / high-flow style': '#c94c4c',
+    'Equity-tilted / growth style': '#e28a2b',
+    'Flow-supported core style': '#249b8a',
+    'Balanced core style': '#7655a6',
+    'Unknown style': '#7b8790'
+  };
+  const styleOrder = Object.keys(styleColors);
+  const enrichedPoints = points.map(p => ({
+    ...p,
+    manager_style_group: p.manager_style_group || predictionStyleMap.get(String(p.event_id || '')) || 'Unknown style'
+  }));
+  const observedStyles = [...new Set(enrichedPoints.map(p => p.manager_style_group))]
+    .sort((a, b) => (styleOrder.indexOf(a) < 0 ? 999 : styleOrder.indexOf(a)) - (styleOrder.indexOf(b) < 0 ? 999 : styleOrder.indexOf(b)));
+  const traces = observedStyles.map(style => {
+    const stylePoints = enrichedPoints.filter(p => p.manager_style_group === style);
+    return {
+      type: 'scatter', mode: 'markers', name: style,
+      x: stylePoints.map(p => p.x), y: stylePoints.map(p => p.y),
+      text: stylePoints.map(p => `${p.manager || ''} | ${p.report_date || ''}`),
+      customdata: stylePoints.map(p => [p.cluster, (clusterMap.get(Number(p.cluster)) || {}).name || '', p.predicted_class, p.positive_probability, style]),
+      marker: {
+        size: stylePoints.map(p => 12 + 30 * ((clusterMap.get(Number(p.cluster)) || {}).large_win_rate || 0)),
+        color: styleColors[style] || '#7b8790', line: { color: '#fff', width: 1.2 }, opacity: 0.88
+      },
+      hovertemplate: '%{text}<br>經理人風格：%{customdata[4]}<br>SHAP Cluster %{customdata[0]}：%{customdata[1]}<br>預測：%{customdata[2]}<br>正向機率：%{customdata[3]:.1%}<extra></extra>'
+    };
+  });
+  Plotly.react(node, traces, {
+    title: `${temporal.horizon_months || state.part6.horizonMonths}M TreeSHAP 決策邏輯地圖（顏色＝經理人 Style）`, height: 500,
+    xaxis: { title: 'PCA display axis 1', zeroline: false }, yaxis: { title: 'PCA display axis 2', zeroline: false },
+    legend: { title: { text: 'Manager style' }, orientation: 'v', x: 1.01, y: 1 },
+    margin: { l: 60, r: 230, t: 70, b: 60 }
+  }, { displaylogo: false, responsive: true });
+  resetPlotlyHandler(node, 'plotly_click', event => {
+    const cluster = Number(event.points && event.points[0] && event.points[0].customdata[0]);
+    if (Number.isFinite(cluster)) { state.part6.activeCluster = cluster; drawPart6Fidelity(result); }
+  });
+  const clusterRows = clusters.map(c => ({
+    ...c,
+    dominant_manager_style: c.dominant_manager_style || 'Unknown style',
+    manager_style_mix: Object.entries(c.manager_style_counts || {}).map(([style, count]) => `${style}: ${count}`).join('；') || '-'
+  }));
+  renderTable('part6ClusterSummary', clusterRows, [
+    { key: 'cluster', label: 'Cluster' }, { key: 'name', label: '資料驅動命名' },
+    { key: 'dominant_manager_style', label: '主導經理人 Style' }, { key: 'manager_style_mix', label: 'Style 分布' },
+    { key: 'event_count', label: '事件數' }, { key: 'large_win_rate', label: '模型預測 large-win 占比', format: 'pct' },
+    { key: 'large_loss_rate', label: '模型預測 large-loss 占比', format: 'pct' }, { key: 'top_features', label: '主導特徵' }
+  ], { title: 'SHAP 聚類摘要（含經理人 Style 組成）', expanded: true, count: clusters.length });
+  if (!clusters.some(c => Number(c.cluster) === Number(state.part6.activeCluster))) state.part6.activeCluster = Number(clusters[0].cluster);
+  drawPart6Fidelity(result);
+}
+
+function drawPart6Fidelity(result) {
+  if (!window.Plotly || !dom.part6FidelityShapChart || !dom.part6FidelityRawChart) return;
+  const temporal = result && result.shap_result ? result.shap_result.temporal_clustering : null;
+  const clusters = temporal && Array.isArray(temporal.clusters) ? temporal.clusters : [];
+  const cluster = clusters.find(c => Number(c.cluster) === Number(state.part6.activeCluster)) || clusters[0];
+  if (!cluster) return;
+  const rows = cluster.fidelity || [];
+  if (dom.part6FidelityHint) dom.part6FidelityHint.textContent = `Cluster ${cluster.cluster}｜${cluster.name}｜${cluster.event_count} events`;
+  Plotly.react(dom.part6FidelityShapChart, [{
+    type: 'bar', orientation: 'h', y: rows.map(r => r.feature).reverse(), x: rows.map(r => r.mean_shap).reverse(),
+    marker: { color: rows.map(r => r.mean_shap >= 0 ? '#2187d5' : '#c94c4c').reverse() },
+    hovertemplate: '%{y}<br>mean TreeSHAP=%{x:.4f}<extra></extra>'
+  }], { title: '左：群組平均 TreeSHAP 歸因', height: 380, margin: { l: 190, r: 30, t: 60, b: 45 } }, { displaylogo: false, responsive: true });
+  const traces = rows.map((r, i) => {
+    const raw = r.raw_values || [];
+    const numericRaw = raw.map(Number).filter(Number.isFinite);
+    const fallbackMean = numericRaw.length ? numericRaw.reduce((sum, value) => sum + value, 0) / numericRaw.length : 0;
+    const fallbackStd = numericRaw.length > 1 ? Math.sqrt(numericRaw.reduce((sum, value) => sum + (value - fallbackMean) ** 2, 0) / (numericRaw.length - 1)) : 1;
+    const reportedMean = Number(r.market_mean), reportedStd = Number(r.market_std);
+    const mean = Number.isFinite(reportedMean) ? reportedMean : fallbackMean;
+    const std = Number.isFinite(reportedStd) && reportedStd > 0 ? reportedStd : (fallbackStd > 0 ? fallbackStd : 1);
+    const standardized = raw.map(value => (Number(value) - mean) / std);
+    return {
+      type: 'box', orientation: 'h', name: r.feature, x: standardized,
+      boxpoints: 'all', jitter: 0.38, pointpos: 0, boxmean: true,
+      marker: { size: 8, opacity: 0.78, color: ['#2187d5', '#1f9d8a', '#f0a44b'][i % 3], line: { color: '#fff', width: 0.8 } },
+      line: { width: 2, color: ['#2187d5', '#1f9d8a', '#f0a44b'][i % 3] },
+      customdata: raw.map(value => [value, mean, std]),
+      hovertemplate: `${r.feature}<br>standardized=%{x:.3f}σ<br>raw=%{customdata[0]:.4f}<br>全事件均值=%{customdata[1]:.4f}<br>全事件標準差=%{customdata[2]:.4f}<extra></extra>`
+    };
+  });
+  Plotly.react(dom.part6FidelityRawChart, traces, {
+    title: '右：群組特徵標準化分布（避免不同量尺壓縮）', height: Math.max(420, 230 + rows.length * 68), showlegend: false,
+    margin: { l: 190, r: 30, t: 60, b: 55 },
+    xaxis: { title: 'Distance from all-event mean (standard deviations)', zeroline: true, zerolinewidth: 2, zerolinecolor: '#667784' }
+  }, { displaylogo: false, responsive: true });
+}
+
+function renderPart6BackendVisuals(result) {
+  configurePart6DateDomain(result && result.received_summary ? result.received_summary.date_domain : null);
+  syncPart6HorizonTabs();
+  const predictions = part6EnrichedPredictions(result);
+  const shapRows = backendShapRows(result);
+  const shapAgg = aggregateBackendShap(shapRows, 14);
+  const avgProb = predictions.length ? mean(predictions.map(p => p.prediction_probability)) : NaN;
+  const highCount = predictions.filter(p => p.prediction_probability >= 0.6).length;
+  const topProb = predictions.length ? Math.max(...predictions.map(p => p.prediction_probability)) : NaN;
+  if (dom.metricBackendPredictionCount) dom.metricBackendPredictionCount.textContent = predictions.length ? formatInt(predictions.length) : '-';
+  if (dom.metricBackendAvgProb) dom.metricBackendAvgProb.textContent = Number.isFinite(avgProb) ? formatPct(avgProb) : '-';
+  if (dom.metricBackendHighProb) dom.metricBackendHighProb.textContent = predictions.length ? formatInt(highCount) : '-';
+  if (dom.metricBackendTopProb) dom.metricBackendTopProb.textContent = Number.isFinite(topProb) ? formatPct(topProb) : '-';
+  const stockActionRows = part6StockActionRowsForDisplay(predictions);
+  part6RenderAnchorCards(result, predictions);
+  part6DrawStyleEventChart(predictions);
+  part6RenderStyleEventTable(predictions);
+  drawPart6PredictionRankChart(predictions); drawPart6ProbabilityHistogram(predictions);
+  drawPart6StockActionChart(stockActionRows); drawPart6ShapFeatureChart(shapAgg); drawPart6SingleEventShapChart(shapRows);
+  drawPart6ClusterMap(result);
+  renderPart6BackendTables(predictions, shapRows, shapAgg, stockActionRows);
+}
+
+// Final dispatcher: the file contains legacy renderers for backward compatibility;
+// this assignment guarantees the multi-horizon renderer is the active one.
+renderPart6BackendVisuals = function(result) {
+  configurePart6DateDomain(result && result.received_summary ? result.received_summary.date_domain : null);
+  syncPart6HorizonTabs();
+  const predictions = part6EnrichedPredictions(result);
+  const shapRows = backendShapRows(result);
+  const shapAgg = aggregateBackendShap(shapRows, 14);
+  const probabilities = predictions.map(p => p.prediction_probability).filter(Number.isFinite);
+  if (dom.metricBackendPredictionCount) dom.metricBackendPredictionCount.textContent = formatInt(predictions.length);
+  if (dom.metricBackendAvgProb) dom.metricBackendAvgProb.textContent = probabilities.length ? formatPct(mean(probabilities)) : '-';
+  if (dom.metricBackendHighProb) dom.metricBackendHighProb.textContent = formatInt(probabilities.filter(p => p >= 0.6).length);
+  if (dom.metricBackendTopProb) dom.metricBackendTopProb.textContent = probabilities.length ? formatPct(Math.max(...probabilities)) : '-';
+  const stockActionRows = part6AllStockActionRows(predictions);
+  renderPart6ExpertCollaboration(result);
+  part6RenderAnchorCards(result, predictions); part6DrawStyleEventChart(predictions); part6RenderStyleEventTable(predictions);
+  drawPart6PredictionRankChart(predictions); drawPart6ProbabilityHistogram(predictions); drawPart6AllStockActionChart(stockActionRows);
+  drawPart6ShapFeatureChart(shapAgg); drawPart6SingleEventShapChart(shapRows); drawPart6ClusterMap(result);
+  renderPart6BackendTables(predictions, shapRows, shapAgg, stockActionRows);
+  renderPart6AllStockActionTable(stockActionRows);
+};
 
 function drawPart6PredictionRankChart(predictions) {
   const node = dom.part6PredictionRankChart;
@@ -5475,25 +6017,71 @@ function drawPart6SingleEventShapChart(shapRows) {
   const node = dom.part6SingleEventShapChart;
   if (!node || !window.Plotly) return;
   if (!shapRows.length) { Plotly.purge(node); return; }
-  const firstEventIndex = shapRows[0].event_index;
-  const rows = shapRows
-    .filter(row => row.event_index === firstEventIndex)
-    .sort((a, b) => Math.abs(a.contribution) - Math.abs(b.contribution));
-  Plotly.react(node, [{
-    type: "bar",
-    orientation: "h",
-    x: rows.map(row => row.contribution),
-    y: rows.map(row => row.feature),
-    text: rows.map(row => row.direction === "positive" ? "+" : "-"),
-    customdata: rows.map(row => [row.value, row.event_label, row.event_id || ""]),
-    hovertemplate: "%{customdata[1]}<br>%{y}<br>value：%{customdata[0]}<br>contribution：%{x:.4f}<extra></extra>"
-  }], {
-    title: `Part6 SHAP：Single-event positive / negative contributions (${rows[0] ? rows[0].event_label : "event"})`,
-    height: 430,
+  part6SyncShapEventPicker(shapRows);
+  const selectedIds = part6SelectedShapEventIds();
+  const selectedRows = shapRows.filter(row => selectedIds.includes(String(row.event_id || '')));
+  const featureTotals = new Map();
+  selectedRows.forEach(row => featureTotals.set(row.feature, (featureTotals.get(row.feature) || 0) + Math.abs(row.contribution)));
+  const features = [...featureTotals.entries()].sort((a, b) => a[1] - b[1]).slice(-14).map(item => item[0]);
+  const eventMap = new Map();
+  selectedRows.forEach(row => {
+    const key = String(row.event_id || '');
+    if (!eventMap.has(key)) eventMap.set(key, { label: row.event_label, rows: new Map() });
+    eventMap.get(key).rows.set(row.feature, row);
+  });
+  const palette = ['#2187d5', '#1f9d8a', '#f0a44b', '#7655a6', '#c94c4c', '#4f77aa', '#59a14f', '#edc948'];
+  const traces = [...eventMap.entries()].map(([eventId, event], index) => ({
+    type: 'bar', orientation: 'h', name: event.label,
+    x: features.map(feature => (event.rows.get(feature) || {}).contribution || 0),
+    y: features,
+    marker: { color: palette[index % palette.length] },
+    customdata: features.map(feature => {
+      const row = event.rows.get(feature) || {};
+      return [row.value, event.label, eventId, row.contribution == null ? 'not in top features' : 'reported'];
+    }),
+    hovertemplate: '%{customdata[1]}<br>%{y}<br>value：%{customdata[0]}<br>contribution：%{x:.4f}<br>%{customdata[3]}<extra></extra>'
+  }));
+  Plotly.react(node, traces, {
+    title: `Part6 SHAP：${eventMap.size} event comparison（positive / negative contributions）`,
+    height: Math.max(480, 240 + features.length * 30), barmode: 'group',
     margin: { l: 220, r: 32, t: 58, b: 52 },
     xaxis: { title: "Contribution to predicted positive excess probability", zeroline: true },
-    yaxis: { automargin: true }
+    yaxis: { automargin: true },
+    legend: { orientation: 'h', y: -0.18 }
   }, { displaylogo: false, responsive: true });
+}
+
+function part6ShapEventOptions(shapRows) {
+  const events = new Map();
+  shapRows.forEach(row => {
+    const id = String(row.event_id || '');
+    if (id && !events.has(id)) events.set(id, row.event_label || id);
+  });
+  return [...events.entries()].map(([event_id, label]) => ({ event_id, label }));
+}
+
+function part6SelectedShapEventIds() {
+  if (!dom.part6ShapEventSelect) return [];
+  return Array.from(dom.part6ShapEventSelect.selectedOptions).map(option => option.value).filter(Boolean).slice(0, 8);
+}
+
+function part6SyncShapEventPicker(shapRows) {
+  if (!dom.part6ShapEventSelect) return;
+  const events = part6ShapEventOptions(shapRows);
+  const validIds = new Set(events.map(event => event.event_id));
+  let selected = part6SelectedShapEventIds().filter(id => validIds.has(id));
+  if (!selected.length && events.length) selected = [events[0].event_id];
+  dom.part6ShapEventSelect.innerHTML = events.map(event => `<option value="${escapeHtml(event.event_id)}"${selected.includes(event.event_id) ? ' selected' : ''}>${escapeHtml(event.label)}</option>`).join('');
+  if (dom.part6ShapSelectionHint) dom.part6ShapSelectionHint.textContent = `已選 ${selected.length} 個事件；共同顯示跨事件總 |SHAP| 最高的 14 個 features。`;
+}
+
+function part6ApplyShapEventSelection() {
+  if (!state.part6.backendResult) return;
+  const selected = part6SelectedShapEventIds();
+  Array.from(dom.part6ShapEventSelect.options).forEach(option => { option.selected = selected.includes(option.value); });
+  const shapRows = backendShapRows(state.part6.backendResult);
+  drawPart6SingleEventShapChart(shapRows);
+  part7PopulateEvents(selected);
 }
 
 function renderPart6BackendTables(predictions, shapRows, shapAgg, stockActionRows = []) {
@@ -7205,6 +7793,8 @@ function part6RenderAnchorCards(result, predictions) {
   const prob = Number(p.prediction_probability);
   const future = Number(p.future_12m_excess_return);
   const styleDev = Number(p.rolling_style_deviation_score);
+  const sectorDev = Number(p.rolling_sector_deviation_score);
+  const actionDev = Number(p.rolling_action_deviation_score);
   const selectedReports = result && result.parsed_state && result.parsed_state.part5 ? Number(result.parsed_state.part5.selected_report_count) : NaN;
   const activeReportKey = anchor.activeKey || '-';
 
@@ -7216,8 +7806,8 @@ function part6RenderAnchorCards(result, predictions) {
     </div>
     <div class="part6-anchor-card">
       <span>Event-time rolling style window</span>
-      <strong>${reportDate ? part6StyleWindowText(reportDate, p.style_window_years || p.training_window_years || 3) : '-'}</strong>
-      <p>表示此 event 應以 anchor date 以前的 trailing 3Y style 解釋，而不是用事後資料。</p>
+      <strong>${p.style_window_start_date && p.style_window_end_date ? `${p.style_window_start_date} ~ ${p.style_window_end_date}` : (reportDate ? part6StyleWindowText(reportDate, p.style_window_years || p.training_window_years || 3) : '-')}</strong>
+      <p>strict trailing 36M、排除當日事件；baseline observations: ${Number.isFinite(Number(p.style_obs_count)) ? p.style_obs_count : '-'}。</p>
     </div>
     <div class="part6-anchor-card">
       <span>Selected manager-action event</span>
@@ -7227,7 +7817,7 @@ function part6RenderAnchorCards(result, predictions) {
     <div class="part6-anchor-card">
       <span>Prediction / style deviation</span>
       <strong>${Number.isFinite(prob) ? formatPct(prob) : '-'}</strong>
-      <p>future 12M excess: ${Number.isFinite(future) ? formatPct(future) : '-'}<br>rolling style deviation: ${Number.isFinite(styleDev) ? formatNumber(styleDev, 3) : 'backend 未回傳完整值'}</p>
+      <p>future 12M excess: ${Number.isFinite(future) ? formatPct(future) : '-'}<br>style / sector / action deviation: ${Number.isFinite(styleDev) ? formatNumber(styleDev, 3) : '-'} / ${Number.isFinite(sectorDev) ? formatNumber(sectorDev, 3) : '-'} / ${Number.isFinite(actionDev) ? formatNumber(actionDev, 3) : '-'}</p>
     </div>
   `;
 }
@@ -7245,6 +7835,15 @@ function part6BuildStyleEventRows(predictions) {
     future_12m_excess_return: p.future_12m_excess_return,
     label_positive_excess_12m: p.label_positive_excess_12m,
     rolling_style_deviation_score: p.rolling_style_deviation_score,
+    rolling_sector_deviation_score: p.rolling_sector_deviation_score,
+    rolling_cross_asset_deviation_score: p.rolling_cross_asset_deviation_score,
+    rolling_action_deviation_score: p.rolling_action_deviation_score,
+    style_obs_count: p.style_obs_count,
+    delta_stock: p.delta_stock,
+    delta_beta: p.delta_beta,
+    delta_technology: p.delta_technology,
+    delta_nonstock_total_exposure: p.delta_nonstock_total_exposure,
+    delta_sector_exposure: p.delta_sector_exposure,
     style_deviation_score: p.style_deviation_score,
     outcome_text: part6OutcomeText(p)
   }));
@@ -7300,7 +7899,16 @@ function part6RenderStyleEventTable(predictions) {
     { key: 'fund', label: 'fund' },
     { key: 'action_type', label: 'model action_type' },
     { key: 'market_regime', label: 'market_regime' },
+    { key: 'style_obs_count', label: '36M baseline obs', format: 'int' },
+    { key: 'delta_stock', label: 'Δ stock', format: 'num' },
+    { key: 'delta_beta', label: 'Δ beta', format: 'num' },
+    { key: 'delta_technology', label: 'Δ technology', format: 'num' },
+    { key: 'delta_sector_exposure', label: 'Δ sector exposure', format: 'num' },
+    { key: 'delta_nonstock_total_exposure', label: 'Δ nonstock exposure', format: 'num' },
     { key: 'rolling_style_deviation_score', label: 'rolling style deviation', format: 'num' },
+    { key: 'rolling_sector_deviation_score', label: 'rolling sector deviation', format: 'num' },
+    { key: 'rolling_cross_asset_deviation_score', label: 'rolling cross-asset deviation', format: 'num' },
+    { key: 'rolling_action_deviation_score', label: 'rolling action deviation', format: 'num' },
     { key: 'style_deviation_score', label: 'style deviation', format: 'num' },
     { key: 'prediction_probability', label: 'ML positive prob', format: 'pct' },
     { key: 'future_12m_excess_return', label: 'future 12M excess', format: 'pct' },

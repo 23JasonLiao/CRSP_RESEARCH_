@@ -1,5 +1,17 @@
 # 專案架構 (Project Structure)
 
+## Part 6 多天期診斷管線
+
+目前版本以事件前 3 年作為 ex-ante 風格基準，對每個經理人調倉事件同時建立未來 3M、6M、9M、12M 超額報酬。五層特徵包含績效風險、11 產業配置、產業輪動與風格漂移、滾動偏離，以及跨資產防守配置。
+
+```powershell
+python scripts\modeling\build_manager_action_groundtruth_complete.py --data-root data
+python scripts\modeling\train_action_effectiveness_model.py --data-root data
+python main.py
+```
+
+模型輸出位於 `models/action_effectiveness/v002/`。每個天期都有 XGBoost 方向分類器、正幅度 Ridge、負幅度 Ridge 與整合 bundle。Part 6 API 回傳四天期預測、exact TreeSHAP、所選天期的 SHAP-KMeans 聚類，以及原始特徵分布的逆向信度資料。
+
 ```text
 your_project/
 │
