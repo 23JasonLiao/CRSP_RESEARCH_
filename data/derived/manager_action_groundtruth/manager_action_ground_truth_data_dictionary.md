@@ -4,7 +4,11 @@ Each row is a manager-action event. Features end before the event and outcomes c
 
 ## Key additions
 
-- `current_*`: current report-month fund characteristics.
+- `current_*`: audit-only current report-month characteristics; forbidden for modeling.
+- `lag1_*`: previous complete-month characteristics used by the model.
+- `lag1_interest_rate_*` and `lag1_market_*`: auditable regime features computed after shifting raw monthly data by one complete month.
+- `*_x_*` regime interactions: deterministic products of point-in-time regime values and event features.
+- `manager_*_score_pti`: point-in-time manager scores using only prior manager dates.
 - `fund_trailing_*`: generic alias for the chosen training window.
 - `rolling_style_deviation_score`: deviation from the manager's own past style before report_date.
 - `rolling_sector_deviation_score`: 11-sector exposure deviation from the strict prior-36M manager baseline.

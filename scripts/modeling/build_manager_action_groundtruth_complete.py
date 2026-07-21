@@ -9,11 +9,11 @@ This script builds the multi-horizon event ground truth used by Part 6:
 - It uses a three-year, strictly ex-ante style window.
 - Every event receives 3M, 6M, 9M and 12M forward excess-return targets.
 - Direction labels use a +/-0.5% neutral band and a five-level outcome label.
-- It keeps trailing features and also adds current-month features.
+- It keeps current-month fields for audit and uses lagged monthly fields for modeling.
 - It adds rolling ex-ante style deviation using only manager history before report_date.
 
 Recommended command in your project:
-    python scripts/modeling/build_manager_action_groundtruth_complete_v2.py --data-root data
+    python scripts/modeling/build_manager_action_groundtruth_complete.py --data-root data
 
 Main outputs:
     data/derived/manager_action_groundtruth/manager_action_ground_truth.csv
@@ -44,13 +44,16 @@ RISK_FREE_RATE = 0.01
 TRAILING_WINDOWS = {3: 36}
 PREDICTION_HORIZONS = (3, 6, 9, 12)
 NEUTRAL_BAND = 0.005
+DESCRIPTIVE_LARGE_BAND = 0.03
 MIN_WINDOW_RATIO = 0.70
+MIN_MANAGER_HISTORY_DATES = 3
 
 FUND_FILES = [
     ["crsp/fund_level/balanced_before2010.csv", "balanced_before2010.csv"],
     ["crsp/fund_level/balanced_after2010.csv", "balanced_after2010.csv"],
 ]
 SP500_FILES = ["market/sp500_monthly_returns_1871_2026.csv", "sp500_monthly_returns_1871_2026.csv"]
+INTEREST_RATE_FILES = ["market/FRB_H15.csv", "FRB_H15.csv"]
 BASE_GT_FILES = [
     "derived/manager_action_groundtruth/manager_action_ground_truth.csv",
     "manager_action_ground_truth.csv",
@@ -68,13 +71,37 @@ IDENTITY_COLUMNS = [
     "crsp_portno", "crsp_fundno", "fund_ticker", "mgmt_name", "report_date",
     "year", "quarter", "month_key", "feature_cutoff_date", "label_start_date", "label_end_date",
     "style_window_start_date", "style_window_end_date", "style_window_type", "style_obs_count",
-    "leakage_check_passed",
+    "manager_history_count", "manager_history_month_count", "manager_history_available",
+    "manager_score_window_start", "manager_score_window_end",
+    "rolling_history_available", "rolling_history_count", "rolling_history_month_count",
+    "feature_source_month", "feature_available_at", "availability_check_passed",
+    "dataset_observation_end", "leakage_check_passed",
 ]
 
 CURRENT_COLUMNS = [
     "current_mret", "current_sp500_ret", "current_excess_ret", "current_net_flow",
     "current_mtna", "current_exp_ratio", "current_mgmt_fee", "current_turn_ratio",
     "current_age", "current_tenure",
+]
+
+LAG1_COLUMNS = [
+    "lag1_mret", "lag1_sp500_ret", "lag1_excess_ret", "lag1_net_flow",
+    "lag1_mtna", "lag1_exp_ratio", "lag1_mgmt_fee", "lag1_turn_ratio",
+]
+REGIME_COLUMNS = [
+    "lag1_interest_rate_level", "lag1_interest_rate_change_3m",
+    "lag1_market_return_3m", "lag1_market_return_12m",
+    "lag1_market_volatility_12m", "lag1_market_drawdown_12m",
+]
+REGIME_INTERACTION_COLUMNS = [
+    "stock_allocation_x_rate_change", "portfolio_beta_x_market_volatility",
+    "technology_exposure_x_market_trend_12m", "bond_allocation_x_rate_change",
+    "rolling_action_deviation_x_market_volatility",
+]
+
+POINT_IN_TIME_MANAGER_COLUMNS = [
+    "manager_reliability_score_pti", "manager_defensive_score_pti",
+    "manager_flow_score_pti", "manager_growth_tilt_score_pti",
 ]
 
 TRAILING_ALIAS_COLUMNS = [
@@ -95,7 +122,8 @@ ACTION_EXPOSURE_COLUMNS = [
     "rolling_style_deviation_score", "rolling_sector_deviation_score",
     "rolling_cross_asset_deviation_score", "rolling_action_deviation_score", "action_strength", "action_type",
     "cross_asset_execution_type", "manager_reliability_score", "manager_defensive_score",
-    "manager_flow_score", "manager_growth_tilt_score", "allocation_completion_method",
+    "manager_flow_score", "manager_growth_tilt_score", *POINT_IN_TIME_MANAGER_COLUMNS,
+    "allocation_completion_method",
     "non_individual_source", "holding_row_count", "beta_matched_holding_count",
     "non_individual_matched_holding_count", "data_quality_flags",
 ] + [f"sector_{s}_exposure" for s in GICS_SECTORS] + [f"delta_sector_{s}" for s in GICS_SECTORS] + ["sector_rotation_intensity"]
@@ -107,20 +135,20 @@ FUTURE_COLUMNS = [
         f"future_{horizon}m_return", f"future_{horizon}m_sp500_return",
         f"future_{horizon}m_excess_return", f"future_{horizon}m_drawdown",
         f"direction_label_{horizon}m", f"outcome_5class_{horizon}m",
-        f"label_positive_excess_{horizon}m",
+        f"label_positive_excess_{horizon}m", f"label_available_{horizon}m",
+        f"label_start_date_{horizon}m", f"label_end_date_{horizon}m",
     )
 ]
 
-ML_NUMERIC_COLUMNS = CURRENT_COLUMNS + TRAILING_ALIAS_COLUMNS + [
+ML_NUMERIC_COLUMNS = LAG1_COLUMNS + REGIME_COLUMNS + REGIME_INTERACTION_COLUMNS + TRAILING_ALIAS_COLUMNS + [
     "yield10y", "stock_allocation", "bond_allocation", "cash_allocation", "portfolio_beta",
     "technology_exposure", "bond_money_exposure", "indirect_equity_exposure",
     "company_equity_exposure_proxy", "top_holding_concentration", "delta_stock",
     "delta_beta", "delta_technology", "delta_bond_money", "delta_indirect_equity",
     "nonstock_total_exposure", "delta_nonstock_total_exposure", "delta_sector_exposure",
-    "style_deviation_score", "rolling_style_deviation_score", "rolling_sector_deviation_score",
+    "rolling_style_deviation_score", "rolling_sector_deviation_score",
     "rolling_cross_asset_deviation_score", "rolling_action_deviation_score", "action_strength",
-    "manager_reliability_score", "manager_defensive_score", "manager_flow_score",
-    "manager_growth_tilt_score", "holding_row_count", "beta_matched_holding_count",
+    *POINT_IN_TIME_MANAGER_COLUMNS, "holding_row_count", "beta_matched_holding_count",
     "non_individual_matched_holding_count", "sector_rotation_intensity",
 ] + [f"sector_{s}_exposure" for s in GICS_SECTORS] + [f"delta_sector_{s}" for s in GICS_SECTORS]
 
@@ -130,6 +158,15 @@ ML_CATEGORICAL_COLUMNS = [
 ]
 
 TARGET_COLUMNS = FUTURE_COLUMNS
+
+FORBIDDEN_MODEL_PREFIXES = (
+    "future_", "direction_label_", "outcome_5class_", "label_positive_excess_",
+    "label_start_date_", "label_end_date_", "label_available_",
+)
+FORBIDDEN_MODEL_COLUMNS = CURRENT_COLUMNS + [
+    "manager_reliability_score", "manager_defensive_score", "manager_flow_score",
+    "manager_growth_tilt_score", "style_deviation_score",
+]
 
 SECTOR_STYLE_FEATURES = [f"sector_{s}_exposure" for s in GICS_SECTORS]
 CROSS_ASSET_STYLE_FEATURES = [
@@ -280,6 +317,13 @@ def load_sp500(root: Path) -> pd.DataFrame:
     out["date"] = pd.to_datetime(out["month_key"] + "-01")
     out = out.sort_values("date").reset_index(drop=True)
     logs = out["sp500_ret"].map(safe_log1p)
+    prior_logs = logs.shift(1)
+    out["lag1_market_return_3m"] = prior_logs.rolling(3, min_periods=3).sum().map(safe_expm1)
+    out["lag1_market_return_12m"] = prior_logs.rolling(12, min_periods=12).sum().map(safe_expm1)
+    out["lag1_market_volatility_12m"] = out["sp500_ret"].shift(1).rolling(12, min_periods=12).std(ddof=1) * math.sqrt(12)
+    out["lag1_market_drawdown_12m"] = out["sp500_ret"].shift(1).rolling(12, min_periods=12).apply(
+        max_drawdown_from_monthly, raw=True
+    )
     for years, months in TRAILING_WINDOWS.items():
         minp = int(months * MIN_WINDOW_RATIO)
         counts = logs.shift(1).rolling(months, min_periods=minp).count()
@@ -287,6 +331,25 @@ def load_sp500(root: Path) -> pd.DataFrame:
         out[f"sp500_trailing_{years}y"] = [annualize_log_sum(s, int(c)) if c >= minp else np.nan for s, c in zip(sums, counts)]
         out[f"sp500_trailing_{years}y_period_return"] = [safe_expm1(s) if c >= minp else np.nan for s, c in zip(sums, counts)]
     return out
+
+
+def load_interest_rate_regime(root: Path) -> pd.DataFrame:
+    """Load auditable monthly H15 rates and expose only information through T-1."""
+    path = find_file(root, INTEREST_RATE_FILES)
+    if path is None:
+        raise FileNotFoundError("Cannot build PTI rate regime features without FRB_H15.csv")
+    raw = pd.read_csv(path, skiprows=5, low_memory=False)
+    if len(raw.columns) < 2:
+        raise ValueError(f"Cannot identify monthly rate columns in {path}")
+    rates = pd.DataFrame({
+        "date": pd.to_datetime(raw.iloc[:, 0], errors="coerce"),
+        "rate": pd.to_numeric(raw.iloc[:, 1], errors="coerce"),
+    }).dropna().sort_values("date")
+    rates["month_key"] = rates["date"].dt.strftime("%Y-%m")
+    rates = rates.groupby("month_key", as_index=False)["rate"].last()
+    rates["lag1_interest_rate_level"] = rates["rate"].shift(1)
+    rates["lag1_interest_rate_change_3m"] = rates["rate"].shift(1) - rates["rate"].shift(4)
+    return rates[["month_key", "lag1_interest_rate_level", "lag1_interest_rate_change_3m"]]
 
 
 def load_fund_month_table(root: Path, sp500: pd.DataFrame) -> pd.DataFrame:
@@ -323,7 +386,12 @@ def load_fund_month_table(root: Path, sp500: pd.DataFrame) -> pd.DataFrame:
     df["net_flow"] = compute_net_flow(df)
     mgr_dt = pd.to_datetime(df.get("mgr_dt", pd.Series(pd.NaT, index=df.index)), errors="coerce")
     df["tenure"] = ((df["date"] - mgr_dt).dt.days / 365.25).clip(lower=0)
-    df = df.merge(sp500[["month_key", "sp500_ret"] + [f"sp500_trailing_{y}y" for y in TRAILING_WINDOWS]], on="month_key", how="left")
+    market_columns = [
+        "month_key", "sp500_ret", "lag1_market_return_3m", "lag1_market_return_12m",
+        "lag1_market_volatility_12m", "lag1_market_drawdown_12m",
+    ] + [f"sp500_trailing_{y}y" for y in TRAILING_WINDOWS]
+    df = df.merge(sp500[market_columns], on="month_key", how="left")
+    df = df.merge(load_interest_rate_regime(root), on="month_key", how="left")
     df["sp500_ret"] = df["sp500_ret"].fillna(0.10 / 12.0)
     df["excess_ret"] = df["mret"] - df["sp500_ret"]
     df["year"] = df["date"].dt.year
@@ -334,6 +402,7 @@ def load_fund_month_table(root: Path, sp500: pd.DataFrame) -> pd.DataFrame:
         "mret": "mean", "sp500_ret": "mean", "excess_ret": "mean",
         "net_flow": "sum", "mtna": "mean", "exp_ratio": "mean", "mgmt_fee": "mean",
         "turn_ratio": "mean", "age": "mean", "tenure": "mean",
+        **{column: "mean" for column in REGIME_COLUMNS},
     }
     id_aggs = {
         "manager": lambda x: next((clean_text(v) for v in x if clean_text(v)), "Unknown Manager"),
@@ -354,6 +423,25 @@ def add_portfolio_rolling_features(pm: pd.DataFrame) -> pd.DataFrame:
     parts = []
     for _, g in pm.groupby("crsp_portno", sort=False):
         g = g.sort_values("date").copy()
+        lag_map = {
+            "mret": "lag1_mret", "sp500_ret": "lag1_sp500_ret",
+            "excess_ret": "lag1_excess_ret", "net_flow": "lag1_net_flow",
+            "mtna": "lag1_mtna", "exp_ratio": "lag1_exp_ratio",
+            "mgmt_fee": "lag1_mgmt_fee", "turn_ratio": "lag1_turn_ratio",
+        }
+        previous_month = g["date"] - pd.DateOffset(months=1)
+        for source, target in lag_map.items():
+            # Match the literal prior calendar month.  A simple row shift would
+            # incorrectly treat an older observation as lag-1 when months are
+            # missing from the source panel.
+            monthly_values = pd.Series(
+                pd.to_numeric(g[source], errors="coerce").to_numpy(),
+                index=pd.DatetimeIndex(g["date"]),
+            )
+            g[target] = previous_month.map(monthly_values)
+        g["feature_source_month"] = previous_month.dt.strftime("%Y-%m")
+        source_month = pd.to_datetime(g["feature_source_month"] + "-01", errors="coerce")
+        g["feature_available_at"] = source_month + pd.offsets.MonthEnd(0)
         fund_logs = g["mret"].map(safe_log1p)
         sp_logs = g["sp500_ret"].map(safe_log1p)
         for years, months in TRAILING_WINDOWS.items():
@@ -491,11 +579,11 @@ def load_base_groundtruth(root: Path) -> pd.DataFrame:
 def enrich_with_current_and_trailing(gt: pd.DataFrame, pm: pd.DataFrame, sector_panel: pd.DataFrame) -> pd.DataFrame:
     # Recompute all forward outcomes from monthly returns so legacy 12M columns cannot
     # silently conflict with the new four-horizon contract.
-    gt = gt.drop(columns=[c for c in gt.columns if c in FUTURE_COLUMNS or re.match(r"^(future_|direction_label_|outcome_5class_|label_positive_excess_)", c)], errors="ignore")
+    gt = gt.drop(columns=[c for c in gt.columns if c in FUTURE_COLUMNS or re.match(r"^(future_|direction_label_|outcome_5class_|label_positive_excess_|label_available_|label_start_date_|label_end_date_)", c)], errors="ignore")
     current_cols = [
         "crsp_portno", "month_key", "mret", "sp500_ret", "excess_ret", "net_flow", "mtna",
         "exp_ratio", "mgmt_fee", "turn_ratio", "age", "tenure",
-    ]
+    ] + LAG1_COLUMNS + REGIME_COLUMNS + ["feature_source_month", "feature_available_at"]
     trailing_cols = []
     for years in TRAILING_WINDOWS:
         trailing_cols += [
@@ -528,101 +616,213 @@ def enrich_with_current_and_trailing(gt: pd.DataFrame, pm: pd.DataFrame, sector_
     return out
 
 
-def compute_future_labels(df: pd.DataFrame) -> pd.DataFrame:
+def compute_future_labels(df: pd.DataFrame, dataset_observation_end: pd.Timestamp) -> pd.DataFrame:
     df = df.copy()
+    report_dates = pd.to_datetime(df["report_date"], errors="coerce")
+    observation_end = pd.Timestamp(dataset_observation_end) + pd.offsets.MonthEnd(0)
+    df["dataset_observation_end"] = observation_end.strftime("%Y-%m-%d")
     for horizon in PREDICTION_HORIZONS:
         ex = pd.to_numeric(df.get(f"future_{horizon}m_excess_return"), errors="coerce")
-        direction = np.select(
-            [ex <= -NEUTRAL_BAND, ex >= NEUTRAL_BAND], [-1, 1], default=0,
-        ).astype(float)
-        direction[ex.isna().to_numpy()] = np.nan
+        label_start = report_dates.dt.to_period("M").dt.to_timestamp() + pd.DateOffset(months=1)
+        label_end = label_start + pd.DateOffset(months=horizon) - pd.DateOffset(days=1)
+        available = label_end.le(observation_end) & ex.notna()
+        df[f"label_start_date_{horizon}m"] = label_start.dt.strftime("%Y-%m-%d")
+        df[f"label_end_date_{horizon}m"] = label_end.dt.strftime("%Y-%m-%d")
+        df[f"label_available_{horizon}m"] = available
+        for target_name in (
+            f"future_{horizon}m_return", f"future_{horizon}m_sp500_return",
+            f"future_{horizon}m_excess_return", f"future_{horizon}m_drawdown",
+        ):
+            if target_name in df:
+                df.loc[~available, target_name] = np.nan
+        direction = pd.Series(np.nan, index=df.index, dtype=float)
+        direction.loc[available & ex.abs().lt(NEUTRAL_BAND)] = 0
+        direction.loc[available & ex.ge(NEUTRAL_BAND)] = 1
+        direction.loc[available & ex.le(-NEUTRAL_BAND)] = -1
         df[f"direction_label_{horizon}m"] = direction
-        df[f"label_positive_excess_{horizon}m"] = np.where(ex.notna(), (direction == 1).astype(int), np.nan)
-        # Data-adaptive tails preserve the requested five levels without leaking across time per event.
-        magnitude = ex.abs()
-        cutoff = float(magnitude[magnitude.notna()].median()) if magnitude.notna().any() else NEUTRAL_BAND
-        cutoff = max(cutoff, NEUTRAL_BAND)
+        positive_label = pd.Series(np.nan, index=df.index, dtype=float)
+        positive_label.loc[direction.eq(1)] = 1
+        positive_label.loc[direction.eq(-1)] = 0
+        df[f"label_positive_excess_{horizon}m"] = positive_label
+        # Descriptive only. Formal online large/small thresholds are learned from
+        # each training fold and persisted in the model bundle.
         df[f"outcome_5class_{horizon}m"] = np.select(
-            [ex <= -cutoff, ex < -NEUTRAL_BAND, ex <= NEUTRAL_BAND, ex < cutoff],
+            [ex <= -DESCRIPTIVE_LARGE_BAND, ex < -NEUTRAL_BAND, ex < NEUTRAL_BAND, ex < DESCRIPTIVE_LARGE_BAND],
             ["large_loss", "small_loss", "neutral", "small_win"],
             default="large_win",
         )
-        df.loc[ex.isna(), f"outcome_5class_{horizon}m"] = np.nan
+        df.loc[~available, f"outcome_5class_{horizon}m"] = np.nan
+    df["label_start_date"] = df["label_start_date_12m"]
+    df["label_end_date"] = df["label_end_date_12m"]
     return df
+
+
+def _cross_section_score(series: pd.Series, higher_is_better: bool = True) -> pd.Series:
+    numeric = pd.to_numeric(series, errors="coerce")
+    score = numeric.rank(method="average", pct=True)
+    return score if higher_is_better else 1.0 - score
+
+
+def add_point_in_time_manager_scores(df: pd.DataFrame) -> pd.DataFrame:
+    """Build manager scores from manager-date observations strictly before each event date."""
+    out = df.copy()
+    out["report_date"] = pd.to_datetime(out["report_date"], errors="coerce").dt.normalize()
+    source_map = {
+        "fund_trailing_return": "annual_return",
+        "fund_trailing_excess_return": "avg_excess",
+        "fund_trailing_max_drawdown": "max_drawdown",
+        "trailing_avg_exp_ratio": "avg_fee",
+        "trailing_avg_net_flow": "avg_flow",
+        "trailing_avg_mtna": "avg_mtna",
+    }
+    for source in source_map:
+        if source not in out:
+            out[source] = np.nan
+        out[source] = pd.to_numeric(out[source], errors="coerce")
+    panel = (
+        out.dropna(subset=["manager", "report_date"])
+        .groupby(["manager", "report_date"], as_index=False)[list(source_map)]
+        .mean()
+        .rename(columns=source_map)
+    )
+    for column in POINT_IN_TIME_MANAGER_COLUMNS:
+        out[column] = np.nan
+    out["manager_history_count"] = 0
+    out["manager_history_month_count"] = 0
+    out["manager_history_available"] = False
+    out["manager_score_window_start"] = ""
+    out["manager_score_window_end"] = ""
+
+    for event_date in sorted(panel["report_date"].dropna().unique()):
+        event_date = pd.Timestamp(event_date)
+        history = panel[panel["report_date"] < event_date]
+        if history.empty:
+            continue
+        summary = history.groupby("manager", as_index=True).agg(
+            manager_history_count=("report_date", "nunique"),
+            manager_history_month_count=("report_date", lambda s: s.dt.to_period("M").nunique()),
+            manager_score_window_start=("report_date", "min"),
+            manager_score_window_end=("report_date", "max"),
+            annual_return=("annual_return", "mean"),
+            annual_volatility=("annual_return", "std"),
+            avg_excess=("avg_excess", "mean"),
+            max_drawdown=("max_drawdown", "min"),
+            avg_fee=("avg_fee", "mean"),
+            avg_flow=("avg_flow", "mean"),
+            avg_mtna=("avg_mtna", "mean"),
+        )
+        summary["sharpe"] = np.where(
+            summary["annual_volatility"].gt(0),
+            (summary["annual_return"] - RISK_FREE_RATE) / summary["annual_volatility"],
+            np.nan,
+        )
+        max_history = max(float(summary["manager_history_count"].max()), 1.0)
+        summary["manager_reliability_score_pti"] = np.log1p(summary["manager_history_count"]) / np.log1p(max_history)
+        summary["manager_defensive_score_pti"] = pd.concat([
+            _cross_section_score(summary["max_drawdown"]),
+            _cross_section_score(summary["annual_volatility"], False),
+            _cross_section_score(summary["avg_fee"], False),
+        ], axis=1).mean(axis=1)
+        summary["manager_flow_score_pti"] = pd.concat([
+            _cross_section_score(summary["avg_flow"]),
+            _cross_section_score(summary["avg_mtna"]),
+        ], axis=1).mean(axis=1)
+        summary["manager_growth_tilt_score_pti"] = pd.concat([
+            _cross_section_score(summary["annual_return"]),
+            _cross_section_score(summary["avg_excess"]),
+            _cross_section_score(summary["sharpe"]),
+        ], axis=1).mean(axis=1)
+        insufficient = summary["manager_history_count"] < MIN_MANAGER_HISTORY_DATES
+        summary.loc[insufficient, POINT_IN_TIME_MANAGER_COLUMNS] = np.nan
+        current_mask = out["report_date"].eq(event_date)
+        manager_values = out.loc[current_mask, "manager"]
+        for column in ["manager_history_count", "manager_history_month_count", *POINT_IN_TIME_MANAGER_COLUMNS]:
+            out.loc[current_mask, column] = manager_values.map(summary[column]).fillna(
+                out.loc[current_mask, column]
+            )
+        out.loc[current_mask, "manager_history_available"] = manager_values.map(
+            (~insufficient).to_dict()
+        ).fillna(False).astype(bool)
+        out.loc[current_mask, "manager_score_window_start"] = manager_values.map(
+            summary["manager_score_window_start"].dt.strftime("%Y-%m-%d")
+        ).fillna("")
+        out.loc[current_mask, "manager_score_window_end"] = manager_values.map(
+            summary["manager_score_window_end"].dt.strftime("%Y-%m-%d")
+        ).fillna("")
+    return out
 
 
 def add_rolling_ex_ante_style_deviation(df: pd.DataFrame, years: int) -> pd.DataFrame:
-    df = df.copy()
+    out = df.copy()
     months = TRAILING_WINDOWS[years]
-    df["report_date"] = pd.to_datetime(df["report_date"], errors="coerce")
-    all_baseline_features = list(dict.fromkeys(STYLE_DEVIATION_FEATURES + ACTION_DEVIATION_FEATURES))
-    for c in all_baseline_features:
-        if c not in df.columns:
-            df[c] = np.nan
-        df[c] = pd.to_numeric(df[c], errors="coerce")
+    out["report_date"] = pd.to_datetime(out["report_date"], errors="coerce").dt.normalize()
+    all_features = list(dict.fromkeys(STYLE_DEVIATION_FEATURES + ACTION_DEVIATION_FEATURES))
+    for column in all_features:
+        if column not in out:
+            out[column] = np.nan
+        out[column] = pd.to_numeric(out[column], errors="coerce")
 
-    # Strict event-time baseline.  At each report_date, only manager observations
-    # in [report_date - 36 months, report_date) are used. Same-date reports are
-    # excluded together, so another portfolio disclosed on the same date cannot leak.
-    tmp = df.sort_values(["manager", "report_date", "crsp_portno"]).copy()
-    baseline_mean = pd.DataFrame(np.nan, index=tmp.index, columns=all_baseline_features, dtype=float)
-    baseline_std = pd.DataFrame(np.nan, index=tmp.index, columns=all_baseline_features, dtype=float)
-    counts = pd.Series(0, index=tmp.index, dtype=int)
-    for _, group in tmp.groupby("manager", sort=False, dropna=False):
-        g = group.sort_values(["report_date", "crsp_portno"])
-        dates = g["report_date"].to_numpy(dtype="datetime64[ns]")
-        start_dates = (g["report_date"] - pd.DateOffset(months=months)).to_numpy(dtype="datetime64[ns]")
-        starts = np.searchsorted(dates, start_dates, side="left")
-        ends = np.searchsorted(dates, dates, side="left")
-        counts.loc[g.index] = ends - starts
-        for c in all_baseline_features:
-            values = pd.to_numeric(g[c], errors="coerce").to_numpy(dtype=float)
-            valid = np.isfinite(values)
-            safe = np.where(valid, values, 0.0)
-            csum = np.r_[0.0, np.cumsum(safe)]
-            csq = np.r_[0.0, np.cumsum(safe * safe)]
-            ccount = np.r_[0, np.cumsum(valid.astype(int))]
-            nobs = ccount[ends] - ccount[starts]
-            total = csum[ends] - csum[starts]
-            total_sq = csq[ends] - csq[starts]
-            mean = np.divide(total, nobs, out=np.full(len(g), np.nan), where=nobs >= 2)
-            variance = np.divide(total_sq - np.divide(total * total, nobs, out=np.zeros(len(g)), where=nobs > 0), nobs - 1, out=np.full(len(g), np.nan), where=nobs >= 2)
-            std = np.sqrt(np.maximum(variance, 0.0))
-            std[std <= 1e-12] = np.nan
-            baseline_mean.loc[g.index, c] = mean
-            baseline_std.loc[g.index, c] = std
+    # One manager-date receives one baseline vote, regardless of how many funds
+    # or report rows the manager has on that date.
+    date_panel = (
+        out.dropna(subset=["manager", "report_date"])
+        .groupby(["manager", "report_date"], as_index=False)[all_features]
+        .mean()
+    )
+    baseline_mean = pd.DataFrame(np.nan, index=out.index, columns=all_features, dtype=float)
+    baseline_std = pd.DataFrame(np.nan, index=out.index, columns=all_features, dtype=float)
+    history_count = pd.Series(0, index=out.index, dtype=int)
+    history_month_count = pd.Series(0, index=out.index, dtype=int)
 
-    baseline = baseline_mean.reindex(df.index)
-    scale = baseline_std.reindex(df.index)
+    for manager, manager_rows in date_panel.groupby("manager", sort=False, dropna=False):
+        manager_rows = manager_rows.sort_values("report_date")
+        target_rows = out.index[out["manager"].eq(manager)]
+        for event_date in manager_rows["report_date"].drop_duplicates():
+            start = event_date - pd.DateOffset(months=months)
+            history = manager_rows[
+                manager_rows["report_date"].ge(start) & manager_rows["report_date"].lt(event_date)
+            ]
+            event_index = target_rows[out.loc[target_rows, "report_date"].eq(event_date)]
+            count = int(history["report_date"].nunique())
+            month_count = int(history["report_date"].dt.to_period("M").nunique())
+            history_count.loc[event_index] = count
+            history_month_count.loc[event_index] = month_count
+            if count < 2:
+                continue
+            means = history[all_features].mean()
+            stds = history[all_features].std(ddof=1).replace(0, np.nan)
+            baseline_mean.loc[event_index, all_features] = means.to_numpy()
+            baseline_std.loc[event_index, all_features] = stds.to_numpy()
+
     zscores: Dict[str, pd.Series] = {}
-    for c in all_baseline_features:
-        z = ((pd.to_numeric(df[c], errors="coerce") - baseline[c]).abs() / scale[c]).replace([np.inf, -np.inf], np.nan)
-        zscores[c] = z
-        df[f"rolling_dev_{c}_{years}y"] = z
-        df[f"rolling_past_mean_{c}_{years}y"] = baseline[c]
-        df[f"rolling_past_std_{c}_{years}y"] = scale[c]
+    for column in all_features:
+        zscore = ((out[column] - baseline_mean[column]).abs() / baseline_std[column]).replace([np.inf, -np.inf], np.nan)
+        zscores[column] = zscore
+        out[f"rolling_dev_{column}_{years}y"] = zscore
+        out[f"rolling_past_mean_{column}_{years}y"] = baseline_mean[column]
+        out[f"rolling_past_std_{column}_{years}y"] = baseline_std[column]
 
     def mean_score(features: List[str]) -> pd.Series:
-        return pd.concat([zscores[c] for c in features], axis=1).mean(axis=1)
+        return pd.concat([zscores[column] for column in features], axis=1).mean(axis=1)
 
     style_score = mean_score(STYLE_DEVIATION_FEATURES)
-    sector_score = mean_score(SECTOR_STYLE_FEATURES)
-    cross_asset_score = mean_score(CROSS_ASSET_STYLE_FEATURES)
-    action_score = mean_score(ACTION_DEVIATION_FEATURES)
-    df[f"rolling_style_deviation_score_{years}y"] = style_score
-    df["rolling_style_deviation_score"] = style_score.fillna(pd.to_numeric(df.get("style_deviation_score"), errors="coerce"))
-    df["rolling_sector_deviation_score"] = sector_score
-    df["rolling_cross_asset_deviation_score"] = cross_asset_score
-    df["rolling_action_deviation_score"] = action_score
-    df["style_window_months"] = months
-    df["style_window_years"] = years
-    df["style_window_type"] = "strict_event_time_trailing_36m_manager_history_excluding_current_date"
-    df["style_window_start_date"] = (df["report_date"] - pd.DateOffset(months=months)).dt.strftime("%Y-%m-%d")
-    df["style_window_end_date"] = (df["report_date"] - pd.DateOffset(days=1)).dt.strftime("%Y-%m-%d")
-    df["style_obs_count"] = counts.reindex(df.index).fillna(0).astype(int)
-    return df
+    out[f"rolling_style_deviation_score_{years}y"] = style_score
+    out["rolling_style_deviation_score"] = style_score
+    out["rolling_sector_deviation_score"] = mean_score(SECTOR_STYLE_FEATURES)
+    out["rolling_cross_asset_deviation_score"] = mean_score(CROSS_ASSET_STYLE_FEATURES)
+    out["rolling_action_deviation_score"] = mean_score(ACTION_DEVIATION_FEATURES)
+    out["style_window_months"] = months
+    out["style_window_years"] = years
+    out["style_window_type"] = "strict_event_time_trailing_36m_manager_date_history_excluding_current_date"
+    out["style_window_start_date"] = (out["report_date"] - pd.DateOffset(months=months)).dt.strftime("%Y-%m-%d")
+    out["style_window_end_date"] = (out["report_date"] - pd.DateOffset(days=1)).dt.strftime("%Y-%m-%d")
+    out["style_obs_count"] = history_count
+    out["rolling_history_count"] = history_count
+    out["rolling_history_month_count"] = history_month_count
+    out["rolling_history_available"] = history_count.ge(2)
+    return out
 
-def add_horizon_aliases(df: pd.DataFrame, years: int) -> pd.DataFrame:
+def add_horizon_aliases(df: pd.DataFrame, years: int, dataset_observation_end: pd.Timestamp) -> pd.DataFrame:
     out = df.copy()
     months = TRAILING_WINDOWS[years]
     out["training_window_years"] = years
@@ -655,26 +855,47 @@ def add_horizon_aliases(df: pd.DataFrame, years: int) -> pd.DataFrame:
     else:
         out["delta_nonstock_total_exposure"] = pd.to_numeric(out.get("delta_bond_money", pd.Series(np.nan, index=out.index)), errors="coerce") + pd.to_numeric(out.get("delta_indirect_equity", pd.Series(np.nan, index=out.index)), errors="coerce")
     out["delta_sector_exposure"] = pd.to_numeric(out.get("sector_rotation_intensity", pd.Series(np.nan, index=out.index)), errors="coerce")
-    out["feature_cutoff_date"] = (pd.to_datetime(out["report_date"]) - pd.DateOffset(days=1)).dt.strftime("%Y-%m-%d")
-    out["label_start_date"] = (pd.to_datetime(out["report_date"]) + pd.DateOffset(days=1)).dt.strftime("%Y-%m-%d")
-    out["label_end_date"] = (pd.to_datetime(out["report_date"]) + pd.DateOffset(months=max(PREDICTION_HORIZONS))).dt.strftime("%Y-%m-%d")
+    feature_available = pd.to_datetime(out.get("feature_available_at"), errors="coerce")
+    report_date = pd.to_datetime(out["report_date"], errors="coerce")
+    out["feature_available_at"] = feature_available.dt.strftime("%Y-%m-%d")
+    out["feature_cutoff_date"] = out["feature_available_at"]
+    out["availability_check_passed"] = feature_available.lt(report_date)
+    out = add_point_in_time_manager_scores(out)
     out = add_rolling_ex_ante_style_deviation(out, years)
-    out = compute_future_labels(out)
+    interaction_sources = {
+        "stock_allocation_x_rate_change": ("stock_allocation", "lag1_interest_rate_change_3m"),
+        "portfolio_beta_x_market_volatility": ("portfolio_beta", "lag1_market_volatility_12m"),
+        "technology_exposure_x_market_trend_12m": ("technology_exposure", "lag1_market_return_12m"),
+        "bond_allocation_x_rate_change": ("bond_allocation", "lag1_interest_rate_change_3m"),
+        "rolling_action_deviation_x_market_volatility": ("rolling_action_deviation_score", "lag1_market_volatility_12m"),
+    }
+    for output, (left, right) in interaction_sources.items():
+        out[output] = pd.to_numeric(out.get(left), errors="coerce") * pd.to_numeric(out.get(right), errors="coerce")
+    out = compute_future_labels(out, dataset_observation_end)
     out["event_id"] = (
         out["training_window_years"].astype(str) + "y__" +
         out.get("manager", pd.Series("", index=out.index)).map(clean_text).str.replace(r"\W+", "_", regex=True).str[:40] + "__" +
         out.get("crsp_portno", pd.Series("", index=out.index)).map(clean_text) + "__" +
         pd.to_datetime(out["report_date"]).dt.strftime("%Y%m%d")
     )
-    # No-leakage audit flags.
-    out["leakage_check_passed"] = True
-    out.loc[pd.to_datetime(out["style_window_end_date"], errors="coerce") >= pd.to_datetime(out["report_date"], errors="coerce"), "leakage_check_passed"] = False
+    # No-leakage audit flags cover lagged availability and both manager-history windows.
+    event_date = pd.to_datetime(out["report_date"], errors="coerce")
+    style_ok = pd.to_datetime(out["style_window_end_date"], errors="coerce").lt(event_date)
+    manager_end = pd.to_datetime(out["manager_score_window_end"], errors="coerce")
+    manager_ok = manager_end.lt(event_date) | ~out["manager_history_available"].fillna(False)
+    out["leakage_check_passed"] = out["availability_check_passed"].fillna(False) & style_ok & manager_ok
     return out
 
 
 def make_ml_training_table(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     needed = [c for c in ML_NUMERIC_COLUMNS + ML_CATEGORICAL_COLUMNS if c in df.columns]
+    forbidden_features = [
+        column for column in needed
+        if column in FORBIDDEN_MODEL_COLUMNS or column.startswith(FORBIDDEN_MODEL_PREFIXES)
+    ]
+    if forbidden_features:
+        raise ValueError(f"Forbidden model columns entered feature list: {forbidden_features}")
     meta_cols = [c for c in IDENTITY_COLUMNS if c in df.columns]
     keep = meta_cols + needed + [c for c in TARGET_COLUMNS if c in df.columns]
     ml = df[keep].copy()
@@ -688,10 +909,49 @@ def make_ml_training_table(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def write_schema_and_dictionary(out_dir: Path, audit: dict) -> None:
+    metadata_columns = list(dict.fromkeys(
+        IDENTITY_COLUMNS + ML_CATEGORICAL_COLUMNS + CURRENT_COLUMNS +
+        ["manager_style_group", "action_type", "market_regime", "data_quality_flags"]
+    ))
+    forbidden_columns = list(dict.fromkeys(
+        FORBIDDEN_MODEL_COLUMNS + [
+            column for column in FUTURE_COLUMNS
+            if column.startswith(FORBIDDEN_MODEL_PREFIXES)
+        ]
+    ))
     schema = {
+        "schema_version": 3,
         "description": "Balanced-fund manager-action events with a three-year ex-ante style window and 3M/6M/9M/12M forward labels.",
+        "id_columns": IDENTITY_COLUMNS,
+        "metadata_columns": metadata_columns,
+        "feature_columns": ML_NUMERIC_COLUMNS,
+        "target_columns": FUTURE_COLUMNS,
+        "forbidden_model_columns": forbidden_columns,
+        "forbidden_model_prefixes": list(FORBIDDEN_MODEL_PREFIXES),
+        "forbidden_columns": forbidden_columns,
+        "forbidden_prefixes": list(FORBIDDEN_MODEL_PREFIXES),
+        "regime_feature_sources": {
+            "interest_rate": {
+                "raw_columns": ["Time Period", "RIFLGFCY10_N.M"],
+                "source": "data/market/FRB_H15.csv",
+                "availability_lag": "one complete month",
+                "builder_function": "load_interest_rate_regime",
+                "output_columns": REGIME_COLUMNS[:2],
+            },
+            "market": {
+                "raw_columns": ["caldt", "sp500_ret"],
+                "source": "data/market/sp500_monthly_returns_1871_2026.csv",
+                "availability_lag": "one complete month",
+                "builder_function": "load_sp500",
+                "output_columns": REGIME_COLUMNS[2:],
+            },
+            "leakage_protection": "shift(1) before every rolling/change calculation; feature_available_at is prior month-end and must precede report_date",
+        },
+        "regime_interaction_columns": REGIME_INTERACTION_COLUMNS,
         "identity_columns": IDENTITY_COLUMNS,
         "current_month_columns": CURRENT_COLUMNS,
+        "lagged_month_columns": LAG1_COLUMNS,
+        "point_in_time_manager_columns": POINT_IN_TIME_MANAGER_COLUMNS,
         "trailing_alias_columns": TRAILING_ALIAS_COLUMNS,
         "action_exposure_columns": ACTION_EXPOSURE_COLUMNS,
         "future_label_columns": FUTURE_COLUMNS,
@@ -704,7 +964,11 @@ def write_schema_and_dictionary(out_dir: Path, audit: dict) -> None:
         "# manager_action_ground_truth data dictionary", "",
         "Each row is a manager-action event. Features end before the event and outcomes cover 3M, 6M, 9M and 12M after it.", "",
         "## Key additions", "",
-        "- `current_*`: current report-month fund characteristics.",
+        "- `current_*`: audit-only current report-month characteristics; forbidden for modeling.",
+        "- `lag1_*`: previous complete-month characteristics used by the model.",
+        "- `lag1_interest_rate_*` and `lag1_market_*`: auditable regime features computed after shifting raw monthly data by one complete month.",
+        "- `*_x_*` regime interactions: deterministic products of point-in-time regime values and event features.",
+        "- `manager_*_score_pti`: point-in-time manager scores using only prior manager dates.",
         "- `fund_trailing_*`: generic alias for the chosen training window.",
         "- `rolling_style_deviation_score`: deviation from the manager's own past style before report_date.",
         "- `rolling_sector_deviation_score`: 11-sector exposure deviation from the strict prior-36M manager baseline.",
@@ -724,6 +988,7 @@ def build_ground_truth_v2(root: Path, output_dir: Path) -> Tuple[pd.DataFrame, d
     print("[2/6] Load S&P500 and fund monthly data; compute current and rolling features")
     sp500 = load_sp500(root)
     port_month = add_forward_outcomes(load_fund_month_table(root, sp500))
+    dataset_observation_end = pd.to_datetime(port_month["date"], errors="coerce").max()
     print(f"      port-month rows = {len(port_month):,}")
     print("[3/6] Join current month, 11-sector panel, 3Y style features and four forward horizons")
     sector_panel = load_sector_exposure_panel(root)
@@ -737,7 +1002,7 @@ def build_ground_truth_v2(root: Path, output_dir: Path) -> Tuple[pd.DataFrame, d
     ml_frames = []
     ml_outputs = {}
     for years in [3]:
-        h = add_horizon_aliases(enriched, years)
+        h = add_horizon_aliases(enriched, years, dataset_observation_end)
         ml = make_ml_training_table(h)
         horizon_path = output_dir / f"manager_action_ground_truth_trailing{years}y_multi_horizon.csv"
         ml_path = prediction_dir / f"part6_prediction_dataset_trailing{years}y_multi_horizon.csv"
@@ -766,9 +1031,19 @@ def build_ground_truth_v2(root: Path, output_dir: Path) -> Tuple[pd.DataFrame, d
         "neutral_band": NEUTRAL_BAND,
         "outcome_label_counts": combined_gt.get("outcome_label", pd.Series(dtype=str)).value_counts(dropna=False).to_dict(),
         "direction_label_counts": {str(h): combined_ml.get(f"direction_label_{h}m", pd.Series(dtype=float)).value_counts(dropna=False).to_dict() for h in PREDICTION_HORIZONS},
+        "label_available_counts": {str(h): combined_gt.get(f"label_available_{h}m", pd.Series(dtype=bool)).value_counts(dropna=False).to_dict() for h in PREDICTION_HORIZONS},
         "leakage_check_passed_counts": combined_gt.get("leakage_check_passed", pd.Series(dtype=bool)).value_counts(dropna=False).to_dict(),
         "style_window_type_counts": combined_gt.get("style_window_type", pd.Series(dtype=str)).value_counts(dropna=False).to_dict(),
         "style_obs_count_summary": pd.to_numeric(combined_gt.get("style_obs_count"), errors="coerce").describe().to_dict(),
+        "manager_history_count_summary": pd.to_numeric(combined_gt.get("manager_history_count"), errors="coerce").describe().to_dict(),
+        "rolling_history_count_summary": pd.to_numeric(combined_gt.get("rolling_history_count"), errors="coerce").describe().to_dict(),
+        "availability_check_passed_counts": combined_gt.get("availability_check_passed", pd.Series(dtype=bool)).value_counts(dropna=False).to_dict(),
+        "regime_feature_sources": {
+            "interest_rate": "FRB_H15.csv, shifted one complete month",
+            "market": "sp500_monthly_returns_1871_2026.csv, shifted before rolling calculations",
+        },
+        "regime_columns": REGIME_COLUMNS,
+        "regime_interaction_columns": REGIME_INTERACTION_COLUMNS,
         "ml_numeric_columns": [c for c in ML_NUMERIC_COLUMNS if c in combined_ml.columns],
         "ml_categorical_columns": [c for c in ML_CATEGORICAL_COLUMNS if c in combined_ml.columns],
     }

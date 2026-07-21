@@ -3,3 +3,8 @@ data/*.csv
 
 # 阻止所有的 JSON 檔案被寫入/提交
 *.json
+
+# 忽略特定的檔案
+check.pdf
+FULL_SYSTEM_EXECUTION_GUIDE.md
+PART1_TO_PART7_EVIDENCE_AUDIT_SYSTEM.md

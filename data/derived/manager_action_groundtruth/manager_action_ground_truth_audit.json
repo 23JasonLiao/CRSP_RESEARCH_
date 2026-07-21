@@ -57,33 +57,104 @@
       "0.0": 3250
     }
   },
+  "label_available_counts": {
+    "3": {
+      "true": 64372,
+      "false": 1460
+    },
+    "6": {
+      "true": 62384,
+      "false": 3448
+    },
+    "9": {
+      "true": 60400,
+      "false": 5432
+    },
+    "12": {
+      "true": 58456,
+      "false": 7376
+    }
+  },
   "leakage_check_passed_counts": {
-    "true": 65832
+    "true": 65634,
+    "false": 198
   },
   "style_window_type_counts": {
-    "strict_event_time_trailing_36m_manager_history_excluding_current_date": 65832
+    "strict_event_time_trailing_36m_manager_date_history_excluding_current_date": 65832
   },
   "style_obs_count_summary": {
     "count": 65832.0,
-    "mean": 2342.3608579414267,
-    "std": 1883.4116411277228,
+    "mean": 30.72906793048973,
+    "std": 10.083568465024587,
     "min": 0.0,
-    "25%": 72.0,
-    "50%": 3262.0,
-    "75%": 3938.0,
-    "max": 4900.0
+    "25%": 29.0,
+    "50%": 36.0,
+    "75%": 36.0,
+    "max": 42.0
   },
+  "manager_history_count_summary": {
+    "count": 65832.0,
+    "mean": 106.52494227731195,
+    "std": 70.39815814762058,
+    "min": 0.0,
+    "25%": 45.0,
+    "50%": 104.0,
+    "75%": 156.0,
+    "max": 282.0
+  },
+  "rolling_history_count_summary": {
+    "count": 65832.0,
+    "mean": 30.72906793048973,
+    "std": 10.083568465024587,
+    "min": 0.0,
+    "25%": 29.0,
+    "50%": 36.0,
+    "75%": 36.0,
+    "max": 42.0
+  },
+  "availability_check_passed_counts": {
+    "true": 65634,
+    "false": 198
+  },
+  "regime_feature_sources": {
+    "interest_rate": "FRB_H15.csv, shifted one complete month",
+    "market": "sp500_monthly_returns_1871_2026.csv, shifted before rolling calculations"
+  },
+  "regime_columns": [
+    "lag1_interest_rate_level",
+    "lag1_interest_rate_change_3m",
+    "lag1_market_return_3m",
+    "lag1_market_return_12m",
+    "lag1_market_volatility_12m",
+    "lag1_market_drawdown_12m"
+  ],
+  "regime_interaction_columns": [
+    "stock_allocation_x_rate_change",
+    "portfolio_beta_x_market_volatility",
+    "technology_exposure_x_market_trend_12m",
+    "bond_allocation_x_rate_change",
+    "rolling_action_deviation_x_market_volatility"
+  ],
   "ml_numeric_columns": [
-    "current_mret",
-    "current_sp500_ret",
-    "current_excess_ret",
-    "current_net_flow",
-    "current_mtna",
-    "current_exp_ratio",
-    "current_mgmt_fee",
-    "current_turn_ratio",
-    "current_age",
-    "current_tenure",
+    "lag1_mret",
+    "lag1_sp500_ret",
+    "lag1_excess_ret",
+    "lag1_net_flow",
+    "lag1_mtna",
+    "lag1_exp_ratio",
+    "lag1_mgmt_fee",
+    "lag1_turn_ratio",
+    "lag1_interest_rate_level",
+    "lag1_interest_rate_change_3m",
+    "lag1_market_return_3m",
+    "lag1_market_return_12m",
+    "lag1_market_volatility_12m",
+    "lag1_market_drawdown_12m",
+    "stock_allocation_x_rate_change",
+    "portfolio_beta_x_market_volatility",
+    "technology_exposure_x_market_trend_12m",
+    "bond_allocation_x_rate_change",
+    "rolling_action_deviation_x_market_volatility",
     "fund_trailing_return",
     "sp500_trailing_return",
     "fund_trailing_excess_return",
@@ -116,16 +187,15 @@
     "nonstock_total_exposure",
     "delta_nonstock_total_exposure",
     "delta_sector_exposure",
-    "style_deviation_score",
     "rolling_style_deviation_score",
     "rolling_sector_deviation_score",
     "rolling_cross_asset_deviation_score",
     "rolling_action_deviation_score",
     "action_strength",
-    "manager_reliability_score",
-    "manager_defensive_score",
-    "manager_flow_score",
-    "manager_growth_tilt_score",
+    "manager_reliability_score_pti",
+    "manager_defensive_score_pti",
+    "manager_flow_score_pti",
+    "manager_growth_tilt_score_pti",
     "holding_row_count",
     "beta_matched_holding_count",
     "non_individual_matched_holding_count",
