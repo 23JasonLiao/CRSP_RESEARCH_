@@ -19,6 +19,7 @@ if __name__ == "__main__":
     args = parse_args()
     print(
         f"Evidence-audit UI: http://{args.host}:{args.port} | "
+        f"Part6=bidirectional probability + signed conditional magnitude | "
         f"Part7 API key={'configured' if os.getenv('OPENAI_API_KEY') else 'preview mode'}"
     )
     uvicorn.run("api_server:app", host=args.host, port=args.port, reload=args.reload, log_level=args.log_level)

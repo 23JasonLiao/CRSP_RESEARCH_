@@ -355,6 +355,61 @@ def _model_reliability_summary() -> Dict[str, Any]:
     }
 
 
+def _finite_number(value: Any) -> Optional[float]:
+    try:
+        number = float(value)
+        return number if number == number and abs(number) != float("inf") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _part6_bidirectional_summary(ml_result: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    predictions = (ml_result or {}).get("predictions") or []
+    by_horizon: Dict[str, Any] = {}
+    for horizon in (3, 6, 9, 12):
+        suffix = f"_{horizon}m"
+        rows = []
+        for prediction in predictions:
+            values = {
+                "positive_probability": _finite_number(prediction.get(f"positive_probability{suffix}")),
+                "negative_probability": _finite_number(prediction.get(f"negative_probability{suffix}")),
+                "conditional_positive_excess": _finite_number(prediction.get(f"conditional_positive_excess{suffix}")),
+                "conditional_negative_excess": _finite_number(prediction.get(f"conditional_negative_excess{suffix}")),
+                "model_implied_excess": _finite_number(prediction.get(f"predicted_excess{suffix}")),
+                "predicted_direction": prediction.get(f"predicted_direction{suffix}"),
+            }
+            if values["positive_probability"] is not None or values["negative_probability"] is not None:
+                rows.append(values)
+
+        def average(key: str) -> Optional[float]:
+            numbers = [row[key] for row in rows if row.get(key) is not None]
+            return sum(numbers) / len(numbers) if numbers else None
+
+        directions: Dict[str, int] = {}
+        for row in rows:
+            direction = str(row.get("predicted_direction") or "unknown")
+            directions[direction] = directions.get(direction, 0) + 1
+        by_horizon[str(horizon)] = {
+            "event_count": len(rows),
+            "direction_counts": directions,
+            "mean_positive_probability": average("positive_probability"),
+            "mean_negative_probability": average("negative_probability"),
+            "mean_conditional_positive_excess": average("conditional_positive_excess"),
+            "mean_conditional_negative_excess": average("conditional_negative_excess"),
+            "mean_model_implied_excess": average("model_implied_excess"),
+            "negative_implied_event_count": sum(1 for row in rows if (row.get("model_implied_excess") or 0) < 0),
+            "positive_implied_event_count": sum(1 for row in rows if (row.get("model_implied_excess") or 0) > 0),
+        }
+    return {
+        "contract_version": "part6-bidirectional-v1",
+        "probability_identity": "P(negative)=1-P(positive) for the binary direction model",
+        "magnitude_formula": "model_implied_excess = P(positive)*E[excess|positive] + P(negative)*E[excess|negative]",
+        "conditional_negative_excess_is_signed": True,
+        "interpretation": "Both directions and both conditional magnitudes must be displayed; probabilities may be relative model scores when calibration warnings exist.",
+        "by_horizon": by_horizon,
+    }
+
+
 def _pydantic_ai_available() -> bool:
     return importlib.util.find_spec("pydantic_ai") is not None
 
@@ -621,8 +676,11 @@ def analyze_visual_state(payload: AnalyzeVisualStateRequest) -> Dict[str, Any]:
             "point_in_time_features": True,
             "prediction_is_final_decision": False,
             "part7_must_audit_with_contemporaneous_evidence": True,
+            "part6_direction_contract": "display positive and negative scores together with both signed conditional magnitudes",
+            "part6_implied_excess_formula": "P(+)*E[excess|+] + P(-)*E[excess|-]",
         },
         "model_reliability": _model_reliability_summary(),
+        "part6_bidirectional_summary": _part6_bidirectional_summary(ml_result),
         "parsed_state": parsed_state,
         "received_summary": {
             "style_window": "trailing_3y_ex_ante",
@@ -672,6 +730,22 @@ def _part7_context(payload: Part7CriticRequest) -> Dict[str, Any]:
         if event.get("event_id") and event.get("event_id") not in {x.get("event_id") for x in events}:
             events.append(event)
         documents.extend(event_docs)
+    prediction_by_id = {str(row.get("event_id")): row for row in predictions if row.get("event_id")}
+    horizon_suffix = f"_{payload.horizon_months}m"
+    for event in events:
+        prediction = prediction_by_id.get(str(event.get("event_id"))) or {}
+        event.update({
+            "positive_probability": prediction.get(f"positive_probability{horizon_suffix}"),
+            "negative_probability": prediction.get(f"negative_probability{horizon_suffix}"),
+            "conditional_positive_excess": prediction.get(f"conditional_positive_excess{horizon_suffix}"),
+            "conditional_negative_excess": prediction.get(f"conditional_negative_excess{horizon_suffix}"),
+            "model_implied_excess": prediction.get(f"predicted_excess{horizon_suffix}"),
+            "predicted_direction": prediction.get(f"predicted_direction{horizon_suffix}"),
+            "predicted_strength": prediction.get(f"predicted_strength{horizon_suffix}"),
+            "direction_threshold": prediction.get(f"direction_threshold{horizon_suffix}"),
+            "probability_warning": prediction.get(f"probability_warning{horizon_suffix}"),
+            "magnitude_fallback_used": prediction.get(f"magnitude_fallback_used{horizon_suffix}"),
+        })
     deduplicated = list({(x.get("title"), x.get("date"), x.get("text")): x for x in documents}.values())
 
     local_docs = part7_service._load_local_documents(BASE_DIR / "data" / "part7_knowledge")

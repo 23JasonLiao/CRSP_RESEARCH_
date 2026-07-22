@@ -342,6 +342,8 @@ function init() {
     "part6PredictionRankChart", "part6ProbabilityHistogramChart", "part6ShapFeatureChart", "part6SingleEventShapChart",
     "part6CandidateTable", "part6BucketTable",
     "metricBackendPredictionCount", "metricBackendAvgProb", "metricBackendHighProb", "metricBackendTopProb",
+    "metricBackendAvgNegativeProb", "metricBackendDirectionCounts", "metricBackendPositiveMagnitude",
+    "metricBackendNegativeMagnitude", "metricBackendImpliedExcess", "metricBackendNegativeImpliedCount",
     "part6PredictionRankChart", "part6ProbabilityHistogramChart", "part6StockActionChart", "part6ShapFeatureChart", "part6SingleEventShapChart",
     "part6PredictionResultTable", "part6StockActionTable", "part6ShapResultTable",
     "part6DateRangeLabel", "part6DateStartRange", "part6DateEndRange", "part6HorizonTabs",
@@ -434,6 +436,7 @@ function init() {
     part6ApplyShapEventSelection();
   });
   if (dom.part7RunAnalysisBtn) dom.part7RunAnalysisBtn.addEventListener("click", runPart7AnalysisPlaceholder);
+  if (dom.part7HorizonSelect) dom.part7HorizonSelect.addEventListener("change", () => part7PopulateEvents());
   loadPart7Status();
   part7PopulateEvents();
 
@@ -5278,7 +5281,11 @@ function buildVisualStatePayload() {
       date_end: state.part6.dateEnd || null,
       candidates: [],
       claim_contract: {
-        claim: "conditional probability that the selected event has positive benchmark-relative excess return at the chosen horizon",
+        claim: "bidirectional direction score plus signed conditional excess magnitudes at the chosen horizon",
+        required_outputs: ["positive_probability", "negative_probability", "conditional_positive_excess", "conditional_negative_excess", "predicted_excess", "predicted_direction"],
+        probability_identity: "P(negative) = 1 - P(positive) for the binary direction model",
+        magnitude_formula: "predicted_excess = P(positive) × E[excess|positive] + P(negative) × E[excess|negative]",
+        negative_magnitude_is_signed: true,
         fallible: true,
         causal: false,
         investment_recommendation: false,
@@ -5350,7 +5357,7 @@ function renderBackendAnalysisSummary(result) {
     rows.push({ section: "ml", field: "feature_count", value: ml.feature_count || "" });
     ml.predictions.slice(0, 20).forEach((p, i) => {
       const h = state.part6.horizonMonths || 12;
-      rows.push({ section: "prediction", field: `${i + 1}. ${p.manager || ""} ${p.report_date || ""}`, value: `prob=${formatNumber(p[`positive_probability_${h}m`], 3)} class=${p[`predicted_class_${h}m`] || ""}` });
+      rows.push({ section: "prediction", field: `${i + 1}. ${p.manager || ""} ${p.report_date || ""}`, value: `P+=${formatNumber(p[`positive_probability_${h}m`], 3)} P-=${formatNumber(p[`negative_probability_${h}m`], 3)} | Mag+=${formatNumber(p[`conditional_positive_excess_${h}m`], 4)} Mag-=${formatNumber(p[`conditional_negative_excess_${h}m`], 4)} | implied=${formatNumber(p[`predicted_excess_${h}m`], 4)} | direction=${p[`predicted_direction_${h}m`] || ""}` });
     });
   }
   const shap = result && result.shap_result ? result.shap_result : null;
@@ -5464,7 +5471,7 @@ function renderPart6Reliability(result) {
     ];
     dom.part6ReliabilityCards.innerHTML = cards.map(([label, value]) => `<div class="part6-reliability-card"><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></div>`).join('');
   }
-  if (dom.part6ClaimContract) dom.part6ClaimContract.innerHTML = `<strong>${horizon}M claim contract</strong><span>P(positive benchmark-relative excess return)，不是成功保證、因果敘事或交易指令。</span><span>window selection 只使用 inner validation；outer test used for selection = ${report.outer_test_used_for_selection === false ? 'false' : 'unknown'}。</span><span>SHAP 只解釋模型輸出；five-class=${escapeHtml(row.five_class_status || '-')}，production-ready=${row.five_class_production_ready === true ? 'yes' : 'no'}。</span>`;
+  if (dom.part6ClaimContract) dom.part6ClaimContract.innerHTML = `<strong>${horizon}M bidirectional claim contract</strong><span>同時閱讀 P(+)／P(−)、signed conditional gain／loss，以及 P(+)×Magnitude(+) + P(−)×Magnitude(−)；任何單一欄位都不是交易指令。</span><span>window selection 只使用 inner validation；outer test used for selection = ${report.outer_test_used_for_selection === false ? 'false' : 'unknown'}。</span><span>SHAP 解釋 positive-class direction output，不是正負 magnitude 的因果分解；five-class=${escapeHtml(row.five_class_status || '-')}，production-ready=${row.five_class_production_ready === true ? 'yes' : 'no'}。</span>`;
   if (dom.part6ReliabilityWarnings) {
     const warnings = [];
     if (Number(outer.worst_auc) < 0.5) warnings.push('最差 outer fold AUC 低於 0.5，存在跨時期失效風險。');
@@ -5498,6 +5505,56 @@ function renderPart6BackendVisuals(result) {
   renderPart6BackendTables(predictions, shapRows, shapAgg, stockActionRows);
   renderPart6Reliability(result);
 }
+
+function part6RenderBidirectionalMetrics(predictions) {
+  const finite = (key) => (predictions || [])
+    .map(row => row[key])
+    .filter(value => value !== null && value !== undefined && value !== '')
+    .map(Number)
+    .filter(Number.isFinite);
+  const averageText = (key) => {
+    const values = finite(key);
+    return values.length ? formatPct(mean(values)) : '-';
+  };
+  const directionCounts = { up: 0, down: 0, neutral: 0, unknown: 0 };
+  (predictions || []).forEach(row => {
+    const direction = Object.prototype.hasOwnProperty.call(directionCounts, row.predicted_direction) ? row.predicted_direction : 'unknown';
+    directionCounts[direction] += 1;
+  });
+  const implied = finite('model_implied_excess');
+  if (dom.metricBackendPredictionCount) dom.metricBackendPredictionCount.textContent = formatInt((predictions || []).length);
+  if (dom.metricBackendAvgProb) dom.metricBackendAvgProb.textContent = averageText('positive_probability');
+  if (dom.metricBackendAvgNegativeProb) dom.metricBackendAvgNegativeProb.textContent = averageText('negative_probability');
+  if (dom.metricBackendDirectionCounts) dom.metricBackendDirectionCounts.textContent = `↑${directionCounts.up}／↓${directionCounts.down}／−${directionCounts.neutral}`;
+  if (dom.metricBackendPositiveMagnitude) dom.metricBackendPositiveMagnitude.textContent = averageText('conditional_positive_excess');
+  if (dom.metricBackendNegativeMagnitude) dom.metricBackendNegativeMagnitude.textContent = averageText('conditional_negative_excess');
+  if (dom.metricBackendImpliedExcess) dom.metricBackendImpliedExcess.textContent = implied.length ? formatPct(mean(implied)) : '-';
+  if (dom.metricBackendNegativeImpliedCount) dom.metricBackendNegativeImpliedCount.textContent = implied.length ? `${formatInt(implied.filter(value => value < 0).length)} / ${formatInt(implied.length)}` : '-';
+}
+
+// Last assignment is intentional: earlier renderers remain for compatibility, while this is the active Part6 contract.
+renderPart6BackendVisuals = function renderPart6BidirectionalBackendVisuals(result) {
+  configurePart6DateDomain(result && result.received_summary ? result.received_summary.date_domain : null);
+  syncPart6HorizonTabs();
+  const predictions = part6EnrichedPredictions(result);
+  const shapRows = backendShapRows(result);
+  const shapAgg = aggregateBackendShap(shapRows, 14);
+  const stockActionRows = part6AllStockActionRows(predictions);
+  part6RenderBidirectionalMetrics(predictions);
+  renderPart6ExpertCollaboration(result);
+  part6RenderAnchorCards(result, predictions);
+  part6DrawStyleEventChart(predictions);
+  part6RenderStyleEventTable(predictions);
+  drawPart6PredictionRankChart(predictions);
+  drawPart6ProbabilityHistogram(predictions);
+  drawPart6AllStockActionChart(stockActionRows);
+  drawPart6ShapFeatureChart(shapAgg);
+  drawPart6SingleEventShapChart(shapRows);
+  drawPart6ClusterMap(result);
+  renderPart6BackendTables(predictions, shapRows, shapAgg, stockActionRows);
+  renderPart6AllStockActionTable(stockActionRows);
+  renderPart6Reliability(result);
+};
 
 /* Part7 only: evidence-grounded critic over persisted Part1–Part6 evidence. */
 async function loadPart7Status() {
@@ -5537,8 +5594,12 @@ function part7PopulateEvents(preferredIds = []) {
   const part6Selected = preferredIds.length ? preferredIds : (typeof part6SelectedShapEventIds === 'function' ? part6SelectedShapEventIds() : []);
   if (!selected.length) selected = part6Selected.filter(id => validIds.has(id)).slice(0, 8);
   const options = ['<option value="">自動選擇最高機率事件</option>'];
+  const horizon = Number(dom.part7HorizonSelect ? dom.part7HorizonSelect.value : state.part6.horizonMonths) || 12;
   for (const row of predictions) {
-    const label = `${row.report_date || '-'} | ${row.manager || '-'} | ${row.fund_ticker || row.crsp_portno || '-'} | ${row.action_type || '-'}`;
+    const positive = row[`positive_probability_${horizon}m`];
+    const negative = row[`negative_probability_${horizon}m`];
+    const direction = row[`predicted_direction_${horizon}m`] || '-';
+    const label = `${row.report_date || '-'} | ${row.manager || '-'} | ${row.fund_ticker || row.crsp_portno || '-'} | ${direction} | P+ ${part7MetricPct(positive)} / P− ${part7MetricPct(negative)}`;
     const id = String(row.event_id || '');
     options.push(`<option value="${escapeHtml(id)}"${selected.includes(id) ? ' selected' : ''}>${escapeHtml(label)}</option>`);
   }
@@ -5582,22 +5643,39 @@ function part7RenderEvidence(evidence) {
   return rows.length ? `<section class="part7-critic-section"><h3>RAG retrieved evidence</h3><div id="part7EvidenceTable"></div></section>` : '';
 }
 
+function part7MetricNumber(value) {
+  if (value === null || value === undefined || value === '') return NaN;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : NaN;
+}
+
+function part7MetricPct(value) {
+  const number = part7MetricNumber(value);
+  return Number.isFinite(number) ? formatPct(number) : '-';
+}
+
 function part7RenderResult(result) {
   if (!dom.part7ExplanationWorkspace) return;
   const event = result.event || {};
   const events = Array.isArray(result.events) && result.events.length ? result.events : (event.event_id ? [event] : []);
   const analysis = result.analysis;
-  const probability = Number(event.positive_probability);
+  const probability = part7MetricNumber(event.positive_probability);
+  const negativeProbability = part7MetricNumber(event.negative_probability);
+  const positiveMagnitude = part7MetricNumber(event.conditional_positive_excess);
+  const negativeMagnitude = part7MetricNumber(event.conditional_negative_excess);
+  const impliedExcess = part7MetricNumber(event.model_implied_excess ?? event.predicted_excess);
   let html = `<div class="part7-verdict-grid">
     <div class="part7-verdict-card"><small>事件數</small><strong>${events.length || 0}</strong></div>
     <div class="part7-verdict-card"><small>經理人</small><strong>${escapeHtml([...new Set(events.map(item => item.manager).filter(Boolean))].join('；') || '-')}</strong></div>
     <div class="part7-verdict-card"><small>報告日／天期</small><strong>${escapeHtml(event.report_date || '-')} / ${escapeHtml(event.horizon_months || '-')}M</strong></div>
-    <div class="part7-verdict-card"><small>Part6 positive probability</small><strong>${Number.isFinite(probability) ? formatPct(probability) : '-'}</strong></div>
+    <div class="part7-verdict-card"><small>Part6 P(+)／P(−)</small><strong>${Number.isFinite(probability) ? formatPct(probability) : '-'}／${Number.isFinite(negativeProbability) ? formatPct(negativeProbability) : '-'}</strong></div>
+    <div class="part7-verdict-card"><small>Conditional magnitude +／−</small><strong>${Number.isFinite(positiveMagnitude) ? formatPct(positiveMagnitude) : '-'}／${Number.isFinite(negativeMagnitude) ? formatPct(negativeMagnitude) : '-'}</strong></div>
+    <div class="part7-verdict-card"><small>Model-implied excess</small><strong>${Number.isFinite(impliedExcess) ? formatPct(impliedExcess) : '-'}</strong></div>
   </div>`;
   const orchestration = result.orchestration || {};
   const temporal = result.temporal_audit || {};
   html += `<section class="part7-audit-contract"><strong>Execution audit</strong><span>orchestrator: ${escapeHtml(orchestration.resolved || orchestration.requested || '-')}</span><span>strict point-in-time: ${temporal.strict ? 'yes' : 'no'}</span><span>future excluded: ${escapeHtml(temporal.future_documents_excluded ?? 0)}</span><span>undated excluded: ${escapeHtml(temporal.undated_documents_excluded ?? 0)}</span></section>`;
-  if (events.length) html += `<section class="part7-critic-section"><h3>Selected Part6 events</h3>${events.map(item => `<div class="part7-item"><strong>${escapeHtml(item.manager || '-')} | ${escapeHtml(item.report_date || '-')}</strong><div>${escapeHtml(item.event_id || '')} · ${escapeHtml(item.action_type || '-')} · positive probability ${Number.isFinite(Number(item.positive_probability)) ? formatPct(Number(item.positive_probability)) : '-'}</div></div>`).join('')}</section>`;
+  if (events.length) html += `<section class="part7-critic-section"><h3>Selected Part6 events</h3>${events.map(item => `<div class="part7-item"><strong>${escapeHtml(item.manager || '-')} | ${escapeHtml(item.report_date || '-')} | ${escapeHtml(item.predicted_direction || item.predicted_class || '-')}</strong><div>${escapeHtml(item.event_id || '')} · ${escapeHtml(item.action_type || '-')} · P+ ${part7MetricPct(item.positive_probability)} · P− ${part7MetricPct(item.negative_probability)} · magnitude + ${part7MetricPct(item.conditional_positive_excess)} · magnitude − ${part7MetricPct(item.conditional_negative_excess)} · implied ${part7MetricPct(item.model_implied_excess ?? item.predicted_excess)}</div></div>`).join('')}</section>`;
 
   if (analysis) {
     const confidence = Number(analysis.confidence);
@@ -5679,7 +5757,10 @@ async function runPart7AnalysisPlaceholder() {
 function renderPart6ExpertCollaboration(result) {
   const expert = result && result.expert_collaboration ? result.expert_collaboration : null;
   const recommendations = expert && Array.isArray(expert.recommendations) ? expert.recommendations : [];
-  const managers = expert && Array.isArray(expert.manager_contributions) ? expert.manager_contributions : [];
+  const managers = expert && Array.isArray(expert.manager_contributions) ? expert.manager_contributions.map(row => {
+    const positive = row.ai_positive_probability === null || row.ai_positive_probability === undefined ? null : Number(row.ai_positive_probability);
+    return { ...row, ai_negative_probability: Number.isFinite(positive) ? 1 - positive : null };
+  }) : [];
   const latest = expert && expert.latest_recommendation ? expert.latest_recommendation : null;
   if (dom.part6ExpertLatestCards) {
     dom.part6ExpertLatestCards.innerHTML = latest ? `
@@ -5723,11 +5804,14 @@ function renderPart6ExpertCollaboration(result) {
     { key: 'style_group', label: '同風格群組' }, { key: 'sharpe', label: 'Sharpe', format: 'num' },
     { key: 'information_ratio', label: 'Information Ratio', format: 'num' }, { key: 'alpha', label: 'Alpha', format: 'pct' },
     { key: 'performance_score', label: '專家績效分數', format: 'num' }, { key: 'relative_style_score', label: '同風格相對分數', format: 'num' },
-    { key: 'expert_weight', label: '專家權重', format: 'pct' }, { key: 'ai_positive_probability', label: 'AI 正向機率', format: 'pct' }, { key: 'ai_weight', label: 'AI-only 權重', format: 'pct' },
+    { key: 'expert_weight', label: '專家權重', format: 'pct' }, { key: 'ai_positive_probability', label: 'AI 正向分數', format: 'pct' },
+    { key: 'ai_negative_probability', label: 'AI 負向分數', format: 'pct' }, { key: 'ai_weight', label: 'AI-only 權重', format: 'pct' },
     { key: 'human_ai_weight', label: 'Human–AI 權重', format: 'pct' }, { key: 'stock_allocation', label: '股票配置', format: 'pct' },
     { key: 'bond_allocation', label: '債券配置', format: 'pct' }, { key: 'cash_allocation', label: '現金配置', format: 'pct' }
   ], { title: '經理人專家權重與股債配置貢獻（全部列出）', expanded: true, count: managers.length });
-  if (dom.part6ExpertCaveat) dom.part6ExpertCaveat.textContent = expert ? expert.research_caveat : '尚無專家協作結果。';
+  if (dom.part6ExpertCaveat) dom.part6ExpertCaveat.textContent = expert
+    ? `${expert.research_caveat || ''} 注意：此專家配置模組仍是既有 positive-score weighting；雙向 conditional magnitude 請以 Part6 direction/magnitude 圖與事件表為準。`
+    : '尚無專家協作結果。';
 }
 
 function part6AllStockActionRows(predictions) {
@@ -5756,8 +5840,8 @@ function drawPart6AllStockActionChart(rows) {
     y: data.map(row => `${row.manager}｜${row.holding_ticker || row.holding_key}｜${row.report_dt}`),
     text: data.map(row => row.stock_action_direction === 'decrease' ? '減碼' : (row.stock_action_direction === 'new_position' ? '新增' : '加碼')),
     marker: { color: data.map(row => row.stock_action_direction === 'decrease' ? '#c94c4c' : (row.stock_action_direction === 'new_position' ? '#2187d5' : '#1f9d8a')) },
-    customdata: data.map(row => [row.manager, row.fund_ticker || row.crsp_portno, row.holding_security_name, row.sector, row.previous_holding_pct, row.current_holding_pct, row.stock_action_direction, row.prediction_probability]),
-    hovertemplate: '經理人：%{customdata[0]}<br>基金：%{customdata[1]}<br>標的：%{customdata[2]}<br>Sector：%{customdata[3]}<br>動作：%{customdata[6]}<br>前期權重：%{customdata[4]:.2%}<br>本期權重：%{customdata[5]:.2%}<br>變化：%{x:.2%}<br>AI 正向機率：%{customdata[7]:.1%}<extra></extra>'
+    customdata: data.map(row => [row.manager, row.fund_ticker || row.crsp_portno, row.holding_security_name, row.sector, row.previous_holding_pct, row.current_holding_pct, row.stock_action_direction, row.positive_probability, row.negative_probability, row.conditional_positive_excess, row.conditional_negative_excess, row.model_implied_excess, row.predicted_direction]),
+    hovertemplate: '經理人：%{customdata[0]}<br>基金：%{customdata[1]}<br>標的：%{customdata[2]}<br>Sector：%{customdata[3]}<br>動作：%{customdata[6]}<br>前期權重：%{customdata[4]:.2%}<br>本期權重：%{customdata[5]:.2%}<br>變化：%{x:.2%}<br>P+：%{customdata[7]:.1%}<br>P−：%{customdata[8]:.1%}<br>magnitude +：%{customdata[9]:.2%}<br>magnitude −：%{customdata[10]:.2%}<br>implied excess：%{customdata[11]:.2%}<br>direction：%{customdata[12]}<extra></extra>'
   }], {
     title: `Part 6：全部真實新增／加碼／減碼（${data.length} 筆，含經理人）`,
     height: Math.max(520, 180 + data.length * 24), margin: { l: 330, r: 40, t: 72, b: 60 },
@@ -5773,7 +5857,10 @@ function renderPart6AllStockActionTable(rows) {
     { key: 'holding_security_name', label: '持有標的' }, { key: 'sector', label: '產業' },
     { key: 'stock_action_direction', label: '真實動作' }, { key: 'previous_holding_pct', label: '前期權重', format: 'pct' },
     { key: 'current_holding_pct', label: '本期權重', format: 'pct' }, { key: 'delta_holding_pct', label: '權重變化', format: 'pct' },
-    { key: 'stock_beta', label: 'Beta', format: 'num' }, { key: 'prediction_probability', label: 'AI 正向機率', format: 'pct' },
+    { key: 'stock_beta', label: 'Beta', format: 'num' }, { key: 'positive_probability', label: 'P(+)', format: 'pct' },
+    { key: 'negative_probability', label: 'P(−)', format: 'pct' }, { key: 'conditional_positive_excess', label: 'magnitude +', format: 'pct' },
+    { key: 'conditional_negative_excess', label: 'magnitude −', format: 'pct' }, { key: 'model_implied_excess', label: 'implied excess', format: 'pct' },
+    { key: 'predicted_direction', label: 'direction' },
     { key: 'model_action_type', label: '模型事件類型' }, { key: 'market_regime', label: '市場狀態' }
   ], { title: 'Part 5 選取事件之全部持股動作（含經理人）', expanded: true, count: (rows || []).length });
 }
@@ -5822,19 +5909,40 @@ function updatePart6DateRangeFromControls() {
 function backendPredictions(result) {
   const horizon = Number(state.part6.horizonMonths) || 12;
   const preds = result && result.ml_result && Array.isArray(result.ml_result.predictions) ? result.ml_result.predictions : [];
-  return preds.map((p, i) => ({
-    ...p,
-    rank: i + 1,
-    horizon_months: horizon,
-    prediction_probability: Number(p[`positive_probability_${horizon}m`]),
-    predicted_excess: Number(p[`predicted_excess_${horizon}m`]),
-    predicted_class: p[`predicted_class_${horizon}m`],
-    future_horizon_excess_return: p[`future_${horizon}m_excess_return`],
-    future_12m_excess_return: p[`future_${horizon}m_excess_return`],
-    label_positive_excess_12m: p[`outcome_5class_${horizon}m`],
-    event_label: `${p.manager || 'Unknown manager'} | ${p.report_date || ''}`,
-    short_label: `${i + 1}. ${(p.manager || 'Unknown').slice(0, 18)} ${p.report_date || ''}`
-  })).filter(p => Number.isFinite(p.prediction_probability));
+  const finiteOrNull = value => {
+    if (value === null || value === undefined || value === '') return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  };
+  return preds.map((p, i) => {
+    const positiveProbability = finiteOrNull(p[`positive_probability_${horizon}m`]);
+    const suppliedNegative = finiteOrNull(p[`negative_probability_${horizon}m`]);
+    const negativeProbability = suppliedNegative ?? (positiveProbability === null ? null : 1 - positiveProbability);
+    return {
+      ...p,
+      rank: i + 1,
+      horizon_months: horizon,
+      positive_probability: positiveProbability,
+      negative_probability: negativeProbability,
+      prediction_probability: positiveProbability,
+      conditional_positive_excess: finiteOrNull(p[`conditional_positive_excess_${horizon}m`]),
+      conditional_negative_excess: finiteOrNull(p[`conditional_negative_excess_${horizon}m`]),
+      model_implied_excess: finiteOrNull(p[`predicted_excess_${horizon}m`]),
+      predicted_excess: finiteOrNull(p[`predicted_excess_${horizon}m`]),
+      predicted_direction: p[`predicted_direction_${horizon}m`] || 'unknown',
+      predicted_strength: p[`predicted_strength_${horizon}m`] || null,
+      direction_threshold: finiteOrNull(p[`direction_threshold_${horizon}m`]),
+      direction_probability_conflict: Boolean(p[`direction_probability_conflict_${horizon}m`]),
+      probability_warning: p[`probability_warning_${horizon}m`] || null,
+      magnitude_fallback_used: Boolean(p[`magnitude_fallback_used_${horizon}m`]),
+      predicted_class: p[`predicted_class_${horizon}m`],
+      future_horizon_excess_return: p[`future_${horizon}m_excess_return`],
+      future_12m_excess_return: p[`future_${horizon}m_excess_return`],
+      label_positive_excess_12m: p[`outcome_5class_${horizon}m`],
+      event_label: `${p.manager || 'Unknown manager'} | ${p.report_date || ''}`,
+      short_label: `${i + 1}. ${(p.manager || 'Unknown').slice(0, 18)} ${p.report_date || ''}`
+    };
+  }).filter(p => p.positive_probability !== null || p.negative_probability !== null);
 }
 
 function backendShapRows(result) {
@@ -5878,6 +5986,7 @@ function drawPart6ClusterMap(result) {
   const enrichedPoints = points.map(p => ({
     ...p,
     positive_probability: p.positive_probability ?? p.direction_signal,
+    negative_probability: p.negative_probability ?? (Number.isFinite(Number(p.positive_probability ?? p.direction_signal)) ? 1 - Number(p.positive_probability ?? p.direction_signal) : null),
     manager_style_group: p.manager_style_group || predictionStyleMap.get(String(p.event_id || '')) || 'Unknown style'
   }));
   const observedStyles = [...new Set(enrichedPoints.map(p => p.manager_style_group))]
@@ -5888,12 +5997,12 @@ function drawPart6ClusterMap(result) {
       type: 'scatter', mode: 'markers', name: style,
       x: stylePoints.map(p => p.x), y: stylePoints.map(p => p.y),
       text: stylePoints.map(p => `${p.manager || ''} | ${p.report_date || ''}`),
-      customdata: stylePoints.map(p => [p.cluster, (clusterMap.get(Number(p.cluster)) || {}).name || '', p.predicted_class, p.positive_probability, style]),
+      customdata: stylePoints.map(p => [p.cluster, (clusterMap.get(Number(p.cluster)) || {}).name || '', p.predicted_class, p.positive_probability, style, p.negative_probability]),
       marker: {
         size: stylePoints.map(p => 12 + 30 * ((clusterMap.get(Number(p.cluster)) || {}).large_win_rate || 0)),
         color: styleColors[style] || '#7b8790', line: { color: '#fff', width: 1.2 }, opacity: 0.88
       },
-      hovertemplate: '%{text}<br>經理人風格：%{customdata[4]}<br>SHAP Cluster %{customdata[0]}：%{customdata[1]}<br>預測：%{customdata[2]}<br>正向機率：%{customdata[3]:.1%}<extra></extra>'
+      hovertemplate: '%{text}<br>經理人風格：%{customdata[4]}<br>SHAP Cluster %{customdata[0]}：%{customdata[1]}<br>預測：%{customdata[2]}<br>P+：%{customdata[3]:.1%}<br>P−：%{customdata[5]:.1%}<extra></extra>'
     };
   });
   Plotly.react(node, traces, {
@@ -6041,20 +6150,37 @@ function drawPart6PredictionRankChart(predictions) {
   const node = dom.part6PredictionRankChart;
   if (!node || !window.Plotly) return;
   if (!predictions.length) { Plotly.purge(node); return; }
-  const ranked = [...predictions].sort((a, b) => b.prediction_probability - a.prediction_probability).slice(0, 25).reverse();
-  Plotly.react(node, [{
-    type: "bar",
-    orientation: "h",
-    x: ranked.map(p => p.prediction_probability),
-    y: ranked.map(p => p.short_label),
-    customdata: ranked.map(p => [p.event_id || "", p.fund || "", p.action_type || "", p.future_12m_excess_return]),
-    hovertemplate: "%{y}<br>positive excess probability：%{x:.1%}<br>event：%{customdata[0]}<br>fund：%{customdata[1]}<br>action：%{customdata[2]}<extra></extra>"
-  }], {
-    title: "Part6：Top manager-action events by predicted positive excess probability",
-    height: 430,
-    margin: { l: 170, r: 36, t: 58, b: 52 },
-    xaxis: { title: "Predicted probability", tickformat: ".0%", range: [0, 1] },
-    yaxis: { automargin: true }
+  const ranked = [...predictions]
+    .sort((a, b) => Math.abs((b.positive_probability || 0) - (b.negative_probability || 0)) - Math.abs((a.positive_probability || 0) - (a.negative_probability || 0)))
+    .slice(0, 30).reverse();
+  const custom = ranked.map(p => [
+    p.event_id || '', p.fund || '', p.action_type || '', p.predicted_direction || '',
+    p.conditional_positive_excess, p.conditional_negative_excess, p.model_implied_excess,
+    p.direction_threshold, p.probability_warning || '', p.positive_probability, p.negative_probability
+  ]);
+  Plotly.react(node, [
+    {
+      type: 'bar', orientation: 'h', name: 'P(negative)',
+      x: ranked.map(p => -(p.negative_probability || 0)), y: ranked.map(p => p.short_label), customdata: custom,
+      marker: { color: '#c94c4c' },
+      hovertemplate: '%{y}<br>P(negative)：%{customdata[10]:.1%}<br>direction：%{customdata[3]}<br>negative magnitude：%{customdata[5]:.2%}<br>model-implied excess：%{customdata[6]:.2%}<br>event：%{customdata[0]}<extra></extra>'
+    },
+    {
+      type: 'bar', orientation: 'h', name: 'P(positive)',
+      x: ranked.map(p => p.positive_probability || 0), y: ranked.map(p => p.short_label), customdata: custom,
+      marker: { color: '#2187d5' },
+      hovertemplate: '%{y}<br>P(positive)：%{customdata[9]:.1%}<br>direction：%{customdata[3]}<br>positive magnitude：%{customdata[4]:.2%}<br>model-implied excess：%{customdata[6]:.2%}<br>event：%{customdata[0]}<extra></extra>'
+    }
+  ], {
+    title: 'Part6：雙向 direction score（左＝negative，右＝positive）',
+    height: Math.max(460, 250 + ranked.length * 22), barmode: 'relative',
+    margin: { l: 185, r: 36, t: 64, b: 66 },
+    xaxis: {
+      title: 'Direction score（校準警告時視為 relative score）', range: [-1, 1],
+      tickvals: [-1, -0.5, 0, 0.5, 1], ticktext: ['100% negative', '50% negative', '0', '50% positive', '100% positive'],
+      zeroline: true, zerolinewidth: 2, zerolinecolor: '#4e5d68'
+    },
+    yaxis: { automargin: true }, legend: { orientation: 'h', y: -0.18 }
   }, { displaylogo: false, responsive: true });
 }
 
@@ -6062,21 +6188,37 @@ function drawPart6ProbabilityHistogram(predictions) {
   const node = dom.part6ProbabilityHistogramChart;
   if (!node || !window.Plotly) return;
   if (!predictions.length) { Plotly.purge(node); return; }
-  Plotly.react(node, [{
-    type: "histogram",
-    x: predictions.map(p => p.prediction_probability),
-    xbins: { start: 0, end: 1, size: 0.05 },
-    hovertemplate: "probability bin：%{x:.1%}<br>count：%{y}<extra></extra>"
-  }], {
-    title: "Part6：Prediction probability distribution",
-    height: 430,
-    margin: { l: 58, r: 28, t: 58, b: 52 },
-    xaxis: { title: "Predicted positive excess probability", tickformat: ".0%", range: [0, 1] },
-    yaxis: { title: "Event count" },
-    shapes: [{
-      type: "line", xref: "x", yref: "paper", x0: 0.5, x1: 0.5, y0: 0, y1: 1,
-      line: { dash: "dot", width: 2 }
-    }]
+  const ranked = [...predictions]
+    .filter(p => Number.isFinite(p.conditional_positive_excess) || Number.isFinite(p.conditional_negative_excess) || Number.isFinite(p.model_implied_excess))
+    .sort((a, b) => (a.model_implied_excess ?? 0) - (b.model_implied_excess ?? 0))
+    .slice(0, 30);
+  const labels = ranked.map(p => p.short_label);
+  const custom = ranked.map(p => [p.positive_probability, p.negative_probability, p.predicted_direction, p.event_id]);
+  Plotly.react(node, [
+    {
+      type: 'bar', orientation: 'h', name: 'E[excess | negative]',
+      x: ranked.map(p => p.conditional_negative_excess), y: labels, customdata: custom,
+      marker: { color: 'rgba(201,76,76,.72)' },
+      hovertemplate: '%{y}<br>conditional negative magnitude：%{x:.2%}<br>P−：%{customdata[1]:.1%}<br>direction：%{customdata[2]}<extra></extra>'
+    },
+    {
+      type: 'bar', orientation: 'h', name: 'E[excess | positive]',
+      x: ranked.map(p => p.conditional_positive_excess), y: labels, customdata: custom,
+      marker: { color: 'rgba(33,135,213,.68)' },
+      hovertemplate: '%{y}<br>conditional positive magnitude：%{x:.2%}<br>P+：%{customdata[0]:.1%}<br>direction：%{customdata[2]}<extra></extra>'
+    },
+    {
+      type: 'scatter', mode: 'markers', name: 'Probability-weighted implied excess',
+      x: ranked.map(p => p.model_implied_excess), y: labels, customdata: custom,
+      marker: { color: '#17202a', size: 10, symbol: 'diamond', line: { color: '#fff', width: 1 } },
+      hovertemplate: '%{y}<br>model-implied excess：%{x:.2%}<br>P+：%{customdata[0]:.1%}<br>P−：%{customdata[1]:.1%}<br>direction：%{customdata[2]}<extra></extra>'
+    }
+  ], {
+    title: 'Part6：雙向 conditional magnitude 與 probability-weighted implied excess',
+    height: Math.max(460, 250 + ranked.length * 22), barmode: 'overlay',
+    margin: { l: 185, r: 30, t: 64, b: 66 },
+    xaxis: { title: 'Benchmark-relative excess magnitude', tickformat: '.1%', zeroline: true, zerolinewidth: 2, zerolinecolor: '#4e5d68' },
+    yaxis: { automargin: true }, legend: { orientation: 'h', y: -0.18 }
   }, { displaylogo: false, responsive: true });
 }
 
@@ -7942,6 +8084,10 @@ function part6RenderAnchorCards(result, predictions) {
     ? `${formatter(Math.min(...values))} ～ ${formatter(Math.max(...values))}`
     : '-';
   const probabilityRange = numericRange(finite('prediction_probability'), value => formatPct(value));
+  const negativeProbabilityRange = numericRange(finite('negative_probability'), value => formatPct(value));
+  const positiveMagnitudeRange = numericRange(finite('conditional_positive_excess'), value => formatPct(value));
+  const negativeMagnitudeRange = numericRange(finite('conditional_negative_excess'), value => formatPct(value));
+  const impliedExcessRange = numericRange(finite('model_implied_excess'), value => formatPct(value));
   const styleRange = numericRange(finite('rolling_style_deviation_score'), value => formatNumber(value, 3));
   const sectorRange = numericRange(finite('rolling_sector_deviation_score'), value => formatNumber(value, 3));
   const actionRange = numericRange(finite('rolling_action_deviation_score'), value => formatNumber(value, 3));
@@ -7967,9 +8113,9 @@ function part6RenderAnchorCards(result, predictions) {
       <p>每個事件各自使用 strict trailing 36M、排除事件當期；baseline observations range: ${observationRange}。<br>actions: ${actions.length ? actions.map(escapeHtml).join('、') : '-'}</p>
     </div>
     <div class="part6-anchor-card">
-      <span>Selected-scope model ranges</span>
-      <strong>Positive score ${probabilityRange}</strong>
-      <p>style deviation: ${styleRange}<br>sector deviation: ${sectorRange}<br>action deviation: ${actionRange}</p>
+      <span>Selected-scope bidirectional model ranges</span>
+      <strong>P+ ${probabilityRange}<br>P− ${negativeProbabilityRange}</strong>
+      <p>magnitude +: ${positiveMagnitudeRange}<br>magnitude −: ${negativeMagnitudeRange}<br>probability-weighted excess: ${impliedExcessRange}<br>style／sector／action deviation: ${styleRange}／${sectorRange}／${actionRange}</p>
     </div>
   `;
 }
@@ -7983,7 +8129,18 @@ function part6BuildStyleEventRows(predictions) {
     style_window: p.style_window_text || part6StyleWindowText(p.report_date, p.training_window_years || 3),
     action_type: p.action_type,
     market_regime: p.market_regime,
+    positive_probability: p.positive_probability,
+    negative_probability: p.negative_probability,
     prediction_probability: p.prediction_probability,
+    conditional_positive_excess: p.conditional_positive_excess,
+    conditional_negative_excess: p.conditional_negative_excess,
+    model_implied_excess: p.model_implied_excess,
+    predicted_direction: p.predicted_direction,
+    predicted_strength: p.predicted_strength,
+    direction_threshold: p.direction_threshold,
+    direction_probability_conflict: p.direction_probability_conflict,
+    probability_warning: p.probability_warning,
+    magnitude_fallback_used: p.magnitude_fallback_used,
     future_12m_excess_return: p.future_12m_excess_return,
     label_positive_excess_12m: p.label_positive_excess_12m,
     rolling_style_deviation_score: p.rolling_style_deviation_score,
@@ -8017,13 +8174,20 @@ function part6DrawStyleEventChart(predictions) {
   }
   const x = rows.map(row => row.report_date);
   const yProb = rows.map(row => row.prediction_probability);
+  const yNegative = rows.map(row => row.negative_probability);
   const yStyle = rows.map(row => Number.isFinite(Number(row.rolling_style_deviation_score)) ? Number(row.rolling_style_deviation_score) : null);
-  const custom = rows.map(row => [row.manager, row.action_type, row.style_window, row.future_12m_excess_return, row.outcome_text, row.market_regime]);
+  const custom = rows.map(row => [row.manager, row.action_type, row.style_window, row.future_12m_excess_return, row.outcome_text, row.market_regime, row.conditional_positive_excess, row.conditional_negative_excess, row.model_implied_excess, row.predicted_direction]);
   Plotly.react(node, [
     {
       type: 'scatter', mode: 'lines+markers', name: 'ML positive probability',
       x, y: yProb, yaxis: 'y', customdata: custom,
-      hovertemplate: 'report date：%{x}<br>manager：%{customdata[0]}<br>action：%{customdata[1]}<br>style window：%{customdata[2]}<br>ML positive prob：%{y:.1%}<br>future 12M excess：%{customdata[3]:.2%}<br>outcome：%{customdata[4]}<br>market：%{customdata[5]}<extra></extra>'
+      hovertemplate: 'report date：%{x}<br>manager：%{customdata[0]}<br>action：%{customdata[1]}<br>style window：%{customdata[2]}<br>ML positive score：%{y:.1%}<br>conditional positive magnitude：%{customdata[6]:.2%}<br>conditional negative magnitude：%{customdata[7]:.2%}<br>model-implied excess：%{customdata[8]:.2%}<br>market：%{customdata[5]}<extra></extra>'
+    },
+    {
+      type: 'scatter', mode: 'lines+markers', name: 'ML negative score',
+      x, y: yNegative, yaxis: 'y', customdata: custom,
+      line: { color: '#c94c4c', dash: 'dot' }, marker: { symbol: 'triangle-down' },
+      hovertemplate: 'report date：%{x}<br>manager：%{customdata[0]}<br>direction：%{customdata[9]}<br>ML negative score：%{y:.1%}<br>conditional negative magnitude：%{customdata[7]:.2%}<br>conditional positive magnitude：%{customdata[6]:.2%}<br>model-implied excess：%{customdata[8]:.2%}<extra></extra>'
     },
     {
       type: 'scatter', mode: 'lines+markers', name: 'Rolling style deviation',
@@ -8031,11 +8195,11 @@ function part6DrawStyleEventChart(predictions) {
       hovertemplate: 'report date：%{x}<br>manager：%{customdata[0]}<br>style window：%{customdata[2]}<br>rolling style deviation：%{y:.3f}<extra></extra>'
     }
   ], {
-    title: 'Part6：Report-date anchor timeline — ML probability vs event-time rolling style deviation',
+    title: 'Part6：Report-date timeline — positive／negative direction score vs rolling style deviation',
     height: 430,
     margin: { l: 68, r: 72, t: 62, b: 72 },
     xaxis: { title: 'Anchor report date from Part5', type: 'category', tickangle: -35 },
-    yaxis: { title: 'ML positive excess probability', tickformat: '.0%', range: [0, 1] },
+    yaxis: { title: 'Positive / negative direction score', tickformat: '.0%', range: [0, 1] },
     yaxis2: { title: 'Rolling style deviation', overlaying: 'y', side: 'right', zeroline: false },
     legend: { orientation: 'h', y: -0.25 },
     hovermode: 'closest'
@@ -8062,7 +8226,13 @@ function part6RenderStyleEventTable(predictions) {
     { key: 'rolling_cross_asset_deviation_score', label: 'rolling cross-asset deviation', format: 'num' },
     { key: 'rolling_action_deviation_score', label: 'rolling action deviation', format: 'num' },
     { key: 'style_deviation_score', label: 'style deviation', format: 'num' },
-    { key: 'prediction_probability', label: 'ML positive prob', format: 'pct' },
+    { key: 'positive_probability', label: 'P(positive)', format: 'pct' },
+    { key: 'negative_probability', label: 'P(negative)', format: 'pct' },
+    { key: 'conditional_positive_excess', label: 'E[excess | positive]', format: 'pct' },
+    { key: 'conditional_negative_excess', label: 'E[excess | negative]', format: 'pct' },
+    { key: 'model_implied_excess', label: 'probability-weighted excess', format: 'pct' },
+    { key: 'predicted_direction', label: 'predicted direction' },
+    { key: 'predicted_strength', label: 'strength' },
     { key: 'future_12m_excess_return', label: 'future 12M excess', format: 'pct' },
     { key: 'outcome_text', label: 'interpreted outcome' }
   ], { title: 'Part6 report-date events: anchor date + rolling-style window + prediction outcome', expanded: true, count: rows.length });
@@ -8088,7 +8258,13 @@ function part6StockActionRowsForDisplay(predictions) {
       manager: pred.manager || '',
       model_action_type: pred.action_type || '',
       market_regime: pred.market_regime || '',
+      positive_probability: pred.positive_probability,
+      negative_probability: pred.negative_probability,
       prediction_probability: pred.prediction_probability,
+      conditional_positive_excess: pred.conditional_positive_excess,
+      conditional_negative_excess: pred.conditional_negative_excess,
+      model_implied_excess: pred.model_implied_excess,
+      predicted_direction: pred.predicted_direction,
       future_12m_excess_return: pred.future_12m_excess_return,
       label_positive_excess_12m: pred.label_positive_excess_12m,
       linked_event_id: pred.event_id || '',
@@ -8137,9 +8313,14 @@ function drawPart6StockActionChart(rows) {
       row.current_holding_pct,
       row.market_regime,
       row.style_window,
-      row.rolling_style_deviation_score
+      row.rolling_style_deviation_score,
+      row.negative_probability,
+      row.conditional_positive_excess,
+      row.conditional_negative_excess,
+      row.model_implied_excess,
+      row.predicted_direction
     ]),
-    hovertemplate: '股票：%{y}<br>基金：%{customdata[0]}<br>名稱：%{customdata[1]}<br>Sector：%{customdata[2]}<br>實際持股動作：%{customdata[3]}<br>model action type：%{customdata[4]}<br>前期權重：%{customdata[8]:.2%}<br>本期權重：%{customdata[9]:.2%}<br>delta：%{x:.2%}<br>Anchor / style window：%{customdata[11]}<br>rolling style deviation：%{customdata[12]:.3f}<br>ML positive prob：%{customdata[5]:.1%}<br>future 12M excess：%{customdata[6]:.2%}<br>結果：%{customdata[7]}<br>market：%{customdata[10]}<extra></extra>'
+    hovertemplate: '股票：%{y}<br>基金：%{customdata[0]}<br>名稱：%{customdata[1]}<br>Sector：%{customdata[2]}<br>實際持股動作：%{customdata[3]}<br>model action type：%{customdata[4]}<br>前期權重：%{customdata[8]:.2%}<br>本期權重：%{customdata[9]:.2%}<br>delta：%{x:.2%}<br>Anchor / style window：%{customdata[11]}<br>rolling style deviation：%{customdata[12]:.3f}<br>P+：%{customdata[5]:.1%}<br>P−：%{customdata[13]:.1%}<br>magnitude +：%{customdata[14]:.2%}<br>magnitude −：%{customdata[15]:.2%}<br>implied excess：%{customdata[16]:.2%}<br>predicted direction：%{customdata[17]}<br>future realized excess：%{customdata[6]:.2%}<br>結果：%{customdata[7]}<br>market：%{customdata[10]}<extra></extra>'
   }], {
     title: 'Part6：Actual stock add/reduce actions linked to anchor report_date, ML prediction, style deviation, and future 12M result',
     height: Math.max(480, Math.min(950, 280 + data.length * 20)),
@@ -8161,7 +8342,14 @@ function renderPart6BackendTables(predictions, shapRows, shapAgg, stockActionRow
     { key: 'action_type', label: 'model action_type' },
     { key: 'market_regime', label: 'market_regime' },
     { key: 'rolling_style_deviation_score', label: 'rolling style deviation', format: 'num' },
-    { key: 'prediction_probability', label: 'ML positive excess probability', format: 'pct' },
+    { key: 'positive_probability', label: 'P(positive)', format: 'pct' },
+    { key: 'negative_probability', label: 'P(negative)', format: 'pct' },
+    { key: 'conditional_positive_excess', label: 'E[excess | positive]', format: 'pct' },
+    { key: 'conditional_negative_excess', label: 'E[excess | negative]', format: 'pct' },
+    { key: 'model_implied_excess', label: 'probability-weighted excess', format: 'pct' },
+    { key: 'predicted_direction', label: 'direction' },
+    { key: 'predicted_strength', label: 'strength' },
+    { key: 'direction_probability_conflict', label: 'direction/prob conflict' },
     { key: 'label_positive_excess_12m', label: 'historical label' },
     { key: 'future_12m_excess_return', label: 'future 12M excess', format: 'pct' }
   ], { title: 'Part6 backend ML prediction events + event-time rolling style context', expanded: true, count: predictions.length });
@@ -8180,7 +8368,12 @@ function renderPart6BackendTables(predictions, shapRows, shapAgg, stockActionRow
     { key: 'delta_holding_pct', label: 'delta weight', format: 'pct' },
     { key: 'rolling_style_deviation_score', label: 'rolling style deviation', format: 'num' },
     { key: 'stock_beta', label: 'stock beta', format: 'num' },
-    { key: 'prediction_probability', label: 'ML positive prob', format: 'pct' },
+    { key: 'positive_probability', label: 'P(positive)', format: 'pct' },
+    { key: 'negative_probability', label: 'P(negative)', format: 'pct' },
+    { key: 'conditional_positive_excess', label: 'magnitude +', format: 'pct' },
+    { key: 'conditional_negative_excess', label: 'magnitude −', format: 'pct' },
+    { key: 'model_implied_excess', label: 'implied excess', format: 'pct' },
+    { key: 'predicted_direction', label: 'direction' },
     { key: 'future_12m_excess_return', label: 'future 12M excess', format: 'pct' },
     { key: 'label_positive_excess_12m', label: 'good/bad label' },
     { key: 'outcome_text', label: 'interpreted outcome' }
@@ -8197,25 +8390,48 @@ function renderPart6BackendTables(predictions, shapRows, shapAgg, stockActionRow
 }
 
 function renderPart6BackendVisuals(result) {
+  configurePart6DateDomain(result && result.received_summary ? result.received_summary.date_domain : null);
+  syncPart6HorizonTabs();
   const predictions = part6EnrichedPredictions(result);
   const shapRows = backendShapRows(result);
   const shapAgg = aggregateBackendShap(shapRows, 14);
-  const avgProb = predictions.length ? mean(predictions.map(p => p.prediction_probability)) : NaN;
-  const highCount = predictions.filter(p => p.prediction_probability >= 0.6).length;
-  const topProb = predictions.length ? Math.max(...predictions.map(p => p.prediction_probability)) : NaN;
-  if (dom.metricBackendPredictionCount) dom.metricBackendPredictionCount.textContent = predictions.length ? formatInt(predictions.length) : '-';
-  if (dom.metricBackendAvgProb) dom.metricBackendAvgProb.textContent = Number.isFinite(avgProb) ? formatPct(avgProb) : '-';
-  if (dom.metricBackendHighProb) dom.metricBackendHighProb.textContent = predictions.length ? formatInt(highCount) : '-';
-  if (dom.metricBackendTopProb) dom.metricBackendTopProb.textContent = Number.isFinite(topProb) ? formatPct(topProb) : '-';
-  const stockActionRows = part6StockActionRowsForDisplay(predictions);
+  const stockActionRows = part6AllStockActionRows(predictions);
+  part6RenderBidirectionalMetrics(predictions);
+  renderPart6ExpertCollaboration(result);
   part6RenderAnchorCards(result, predictions);
   part6DrawStyleEventChart(predictions);
   part6RenderStyleEventTable(predictions);
   drawPart6PredictionRankChart(predictions);
   drawPart6ProbabilityHistogram(predictions);
-  drawPart6StockActionChart(stockActionRows);
+  drawPart6AllStockActionChart(stockActionRows);
   drawPart6ShapFeatureChart(shapAgg);
   drawPart6SingleEventShapChart(shapRows);
+  drawPart6ClusterMap(result);
   renderPart6BackendTables(predictions, shapRows, shapAgg, stockActionRows);
+  renderPart6AllStockActionTable(stockActionRows);
   renderPart6Reliability(result);
 }
+
+// This statement executes after every legacy declaration and makes the bidirectional renderer authoritative.
+renderPart6BackendVisuals = function renderPart6BidirectionalFinal(result) {
+  configurePart6DateDomain(result && result.received_summary ? result.received_summary.date_domain : null);
+  syncPart6HorizonTabs();
+  const predictions = part6EnrichedPredictions(result);
+  const shapRows = backendShapRows(result);
+  const shapAgg = aggregateBackendShap(shapRows, 14);
+  const stockActionRows = part6AllStockActionRows(predictions);
+  part6RenderBidirectionalMetrics(predictions);
+  renderPart6ExpertCollaboration(result);
+  part6RenderAnchorCards(result, predictions);
+  part6DrawStyleEventChart(predictions);
+  part6RenderStyleEventTable(predictions);
+  drawPart6PredictionRankChart(predictions);
+  drawPart6ProbabilityHistogram(predictions);
+  drawPart6AllStockActionChart(stockActionRows);
+  drawPart6ShapFeatureChart(shapAgg);
+  drawPart6SingleEventShapChart(shapRows);
+  drawPart6ClusterMap(result);
+  renderPart6BackendTables(predictions, shapRows, shapAgg, stockActionRows);
+  renderPart6AllStockActionTable(stockActionRows);
+  renderPart6Reliability(result);
+};

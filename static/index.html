@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Tab6 S&P500 Fund Analysis</title>
-  <link rel="stylesheet" href="style.css?v=20260722-fidelity-scope" />
+  <link rel="stylesheet" href="style.css?v=20260722-part6-bidirectional" />
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 </head>
@@ -361,9 +361,19 @@
 
         <div class="metrics part6-backend-metrics">
           <div><span>ML events</span><strong id="metricBackendPredictionCount">-</strong></div>
-          <div><span>平均 positive excess 機率</span><strong id="metricBackendAvgProb">-</strong></div>
-          <div><span>高信心 positive 數</span><strong id="metricBackendHighProb">-</strong></div>
-          <div><span>最高 positive excess 機率</span><strong id="metricBackendTopProb">-</strong></div>
+          <div class="part6-positive-metric"><span>平均 positive score</span><strong id="metricBackendAvgProb">-</strong></div>
+          <div class="part6-negative-metric"><span>平均 negative score</span><strong id="metricBackendAvgNegativeProb">-</strong></div>
+          <div><span>預測 Up／Down／Neutral</span><strong id="metricBackendDirectionCounts">-</strong></div>
+          <div class="part6-positive-metric"><span>平均 E[excess｜positive]</span><strong id="metricBackendPositiveMagnitude">-</strong></div>
+          <div class="part6-negative-metric"><span>平均 E[excess｜negative]</span><strong id="metricBackendNegativeMagnitude">-</strong></div>
+          <div><span>平均 probability-weighted excess</span><strong id="metricBackendImpliedExcess">-</strong></div>
+          <div><span>Implied excess 負值事件</span><strong id="metricBackendNegativeImpliedCount">-</strong></div>
+        </div>
+        <div class="part6-direction-contract">
+          <strong>雙向模型主張</strong>
+          <span class="positive">藍色：P(positive) 與 E[excess｜positive]</span>
+          <span class="negative">紅色：P(negative) 與 E[excess｜negative]（保留負號）</span>
+          <span>黑色菱形／數值：P(+)×Magnitude(+) + P(−)×Magnitude(−)</span>
         </div>
         <div class="part6-reliability-panel">
           <div class="section-head"><div><h3>Part6 模型穩定性與主張邊界</h3><p class="part6-method-note">模型分數是可失效的量化主張；必須連同 inner validation、未參與選模的 outer test、校準與特徵貢獻一起閱讀。</p></div></div>
@@ -495,6 +505,6 @@
     </section>
   </main>
 
-  <script src="app.js?v=20260722-fidelity-scope"></script>
+  <script src="app.js?v=20260722-part6-bidirectional"></script>
 </body>
 </html>

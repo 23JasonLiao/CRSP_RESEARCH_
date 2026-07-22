@@ -53,6 +53,23 @@
   border-left: 4px solid #376f8f;
   background: rgba(255,255,255,.7);
 }
+.part6-direction-contract {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+  margin: 12px 0 18px;
+  padding: 12px 14px;
+  border: 1px solid rgba(65, 87, 101, .18);
+  border-radius: 10px;
+  background: rgba(248, 251, 253, .92);
+  color: var(--muted);
+}
+.part6-direction-contract strong { color: var(--text); }
+.part6-direction-contract .positive { color: #176fae; }
+.part6-direction-contract .negative { color: #b64242; }
+.part6-backend-metrics .part6-positive-metric { border-top: 3px solid #2187d5; }
+.part6-backend-metrics .part6-negative-metric { border-top: 3px solid #c94c4c; }
 .part7-architecture-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
