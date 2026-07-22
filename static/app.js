@@ -4,6 +4,8 @@
 
 const DEFAULT_FUND_FILES = ["balanced_before2010.csv", "balanced_after2010.csv"];
 const DEFAULT_SP500_FILE = "sp500_monthly_returns_1871_2026.csv";
+const VISUAL_STATE_SCHEMA_VERSION = "visual-state-v2";
+const FRONTEND_CONTRACT_VERSION = "2026-07-22";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MS_PER_YEAR = 365.25 * MS_PER_DAY;
@@ -334,6 +336,7 @@ function init() {
     "runBackendAnalysisBtn", "backendAnalysisStatus", "backendAnalysisSummary",
     "part6FrontendContent", "part6BackendContent", "part7RunAnalysisBtn", "part7Status", "part7ExplanationWorkspace",
     "part7EventSelect", "part7HorizonSelect", "part7ModelInput", "part7WebSearchInput", "part7QuestionInput", "part7RuntimeCards",
+    "part7OrchestrationSelect", "part7EvidenceScopeSelect", "part7TickerFocusInput", "part7StrictTemporalInput", "part7CounterevidenceInput",
     "metricP6Rows", "metricP6Positive", "metricP6HighPositive", "metricP6AvgFuture",
     "part6BucketChart", "part6ScatterChart", "part6PortfolioChart",
     "part6PredictionRankChart", "part6ProbabilityHistogramChart", "part6ShapFeatureChart", "part6SingleEventShapChart",
@@ -345,7 +348,8 @@ function init() {
     "part6ClusterMap", "part6ClusterSummary", "part6FidelityHint", "part6FidelityShapChart", "part6FidelityRawChart",
     "part6ShapEventSelect", "part6SelectAllShapEventsBtn", "part6ClearShapEventsBtn", "part6ShapSelectionHint",
     "part6ExpertLatestCards", "part6ExpertAllocationChart", "part6ExpertRecommendationTable",
-    "part6ExpertManagerTable", "part6ExpertCaveat", "part6StockActionSummary"
+    "part6ExpertManagerTable", "part6ExpertCaveat", "part6StockActionSummary",
+    "part6ReliabilityCards", "part6ClaimContract", "part6ReliabilityWarnings"
   ].forEach(id => {
     dom[id] = document.getElementById(id);
   });
@@ -5148,6 +5152,32 @@ function buildPart5DetailPayload() {
     brushedHoldingKeys: [...(state.part5.brushedHoldingKeys || [])],
     selectedManagerNames: [...(state.part5.selectedManagerNames || [])],
     reports,
+    event_contract: {
+      analysis_unit: "manager × fund/portfolio × report_date disclosed-action event",
+      anchor_field: "report_date",
+      prior_state_rule: "compare each selected report with the latest strictly earlier report for the same portfolio",
+      action_labels: ["new_position", "increase", "decrease", "unchanged", "exit"],
+      zero_action_interpretation: "no matched prior report or no measurable holding change; never infer no managerial decision"
+    },
+    availability_contract: {
+      point_in_time: true,
+      feature_cutoff: "on_or_before_report_date",
+      future_outcomes_excluded_from_features: true,
+      disclosure_caveat: "report_date holdings are disclosed snapshots, not exact trade timestamps",
+      stock_action_rows_truncated: false
+    },
+    selection_audit: {
+      selected_report_keys: selectedReportKeys,
+      selected_holding_keys: selectedHoldingKeys,
+      report_selection_source: state.part5.brushedReportKeys && state.part5.brushedReportKeys.length ? "brush" : (state.part5.activeReportKey ? "active_report" : "none"),
+      selected_report_count: selectedReports.length,
+      selected_stock_action_count: stockActionRows.length
+    },
+    data_coverage: {
+      filtered_report_count: reports.length,
+      filtered_holding_count: detailRows.length,
+      reports_with_action_rows: new Set(stockActionRows.map(row => row.reportKey || row.report_key).filter(Boolean)).size
+    },
     period_summary: buildPart5PeriodSummaryRowsForBackend(reports, holdingsForSummary),
     holdings_detail_all: detailRows,
     selected_fund_reports: selectedReports,
@@ -5175,7 +5205,13 @@ function backendFeatureContext() {
     target_horizon_months: state.part6.horizonMonths || 12,
     current_month_feature_keys: ["current_mret", "current_sp500_ret", "current_excess_ret", "current_net_flow", "current_mtna", "current_exp_ratio", "current_mgmt_fee", "current_turn_ratio", "current_age", "current_tenure"],
     trailing_feature_keys: ["fund_trailing_return", "sp500_trailing_return", "fund_trailing_excess_return", "fund_trailing_period_return", "fund_trailing_max_drawdown", "fund_trailing_beta_vs_sp500", "trailing_avg_net_flow", "trailing_sum_net_flow", "trailing_avg_mtna", "trailing_avg_exp_ratio", "trailing_avg_mgmt_fee", "trailing_avg_turn_ratio", "trailing_avg_age", "trailing_avg_tenure"],
-    action_feature_keys: ["stock_allocation", "bond_allocation", "cash_allocation", "portfolio_beta", "technology_exposure", "bond_money_exposure", "indirect_equity_exposure", "delta_stock", "delta_beta", "delta_technology", "delta_bond_money", "delta_indirect_equity", "delta_nonstock_total_exposure", "delta_sector_exposure", "rolling_style_deviation_score", "rolling_sector_deviation_score", "rolling_cross_asset_deviation_score", "rolling_action_deviation_score"]
+    action_feature_keys: ["stock_allocation", "bond_allocation", "cash_allocation", "portfolio_beta", "technology_exposure", "bond_money_exposure", "indirect_equity_exposure", "delta_stock", "delta_beta", "delta_technology", "delta_bond_money", "delta_indirect_equity", "delta_nonstock_total_exposure", "delta_sector_exposure", "rolling_style_deviation_score", "rolling_sector_deviation_score", "rolling_cross_asset_deviation_score", "rolling_action_deviation_score"],
+    point_in_time_contract: {
+      feature_information_set: "only observations available on or before report_date",
+      style_baseline: "trailing 36 months ending at the event anchor",
+      validation: "nested time-series / walk-forward; outer test never selects the window",
+      prohibited_inputs: ["future return", "future benchmark return", "post-event evidence"]
+    }
   };
 }
 
@@ -5187,16 +5223,30 @@ function buildVisualStatePayload() {
   const part3Payload = buildPart3DetailPayload();
   const part4Payload = buildPart4DetailPayload();
   const part5Payload = buildPart5DetailPayload();
-  const part6Rows = currentPart6RowsForBackend();
+  const generatedAt = new Date().toISOString();
+  const snapshotId = globalThis.crypto && typeof globalThis.crypto.randomUUID === "function"
+    ? `vs_${globalThis.crypto.randomUUID()}`
+    : `vs_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  const provenance = part => ({ part, source: "interactive_visual_state", generated_at: generatedAt, snapshot_id: snapshotId });
   return {
     context: {
+      schema_version: VISUAL_STATE_SCHEMA_VERSION,
+      frontend_contract_version: FRONTEND_CONTRACT_VERSION,
+      snapshot_id: snapshotId,
+      generated_at: generatedAt,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Taipei",
       horizon: "y3",
       horizonTitle: HORIZONS.y3.title,
       selectionMode: state.selectionMode,
-      timestamp: new Date().toISOString(),
+      timestamp: generatedAt,
+      research_purpose: "human_guided_manager_action_case_audit",
+      analysis_unit: "manager × fund/portfolio × report_date disclosed-action event",
+      intended_user: "institutional investment researcher, fund analyst, or model-risk reviewer",
+      decision_boundary: "research and challenge workflow; not an autonomous trade instruction",
       backend_feature_context: featureContext
     },
     part1: {
+      provenance: provenance("part1"),
       backend_feature_context: featureContext,
       boxA: state.p1BoxA,
       boxB: state.p1BoxB,
@@ -5213,11 +5263,12 @@ function buildVisualStatePayload() {
         hover_metadata: ["fund_name", "mgmt_name", "mgr_name", "caldt", "crsp_fundno"]
       }
     },
-    part2: { backend_feature_context: featureContext, ...part2Payload },
-    part3: { backend_feature_context: featureContext, ...part3Payload },
-    part4: { backend_feature_context: featureContext, ...part4Payload },
-    part5: { backend_feature_context: featureContext, ...part5Payload },
+    part2: { provenance: provenance("part2"), semantic_role: "human-defined multivariate case boundary", backend_feature_context: featureContext, ...part2Payload },
+    part3: { provenance: provenance("part3"), semantic_role: "manager identity and track-record linkage", backend_feature_context: featureContext, ...part3Payload },
+    part4: { provenance: provenance("part4"), semantic_role: "ex-ante style and style-drift characterization", backend_feature_context: featureContext, ...part4Payload },
+    part5: { provenance: provenance("part5"), semantic_role: "report-date holdings/action evidence anchor", backend_feature_context: featureContext, ...part5Payload },
     part6: {
+      provenance: provenance("part6_request"),
       backend_feature_context: featureContext,
       mode: state.part6.mode || "backend",
       window: "y3",
@@ -5225,7 +5276,15 @@ function buildVisualStatePayload() {
       horizon_months: state.part6.horizonMonths || 12,
       date_start: state.part6.dateStart || null,
       date_end: state.part6.dateEnd || null,
-      candidates: []
+      candidates: [],
+      claim_contract: {
+        claim: "conditional probability that the selected event has positive benchmark-relative excess return at the chosen horizon",
+        fallible: true,
+        causal: false,
+        investment_recommendation: false,
+        explanations: "SHAP attributes model output; it does not prove managerial intent or causality",
+        required_diagnostics: ["selected training window", "inner validation", "untouched outer test", "Brier/calibration", "feature stability", "manager-action ablation"]
+      }
     }
   };
 }
@@ -5387,6 +5446,34 @@ function aggregateBackendShap(rows, topN = 14) {
     .reverse();
 }
 
+function renderPart6Reliability(result) {
+  const report = result && result.model_reliability ? result.model_reliability : {};
+  const horizon = String(state.part6.horizonMonths || 12);
+  const row = (report.horizons || {})[horizon] || {};
+  const outer = row.outer_test || {};
+  const inner = row.inner_validation || {};
+  const fmt = value => Number.isFinite(Number(value)) ? Number(value).toFixed(3) : '-';
+  if (dom.part6ReliabilityCards) {
+    const cards = [
+      ['模型／視窗', `${report.bundle_version || '-'} · ${row.selected_window || '-'}`],
+      ['Inner AUC', `${fmt(inner.mean_auc)}（worst ${fmt(inner.worst_auc)}）`],
+      ['Outer AUC', `${fmt(outer.mean_auc)}（worst ${fmt(outer.worst_auc)}）`],
+      ['Outer Brier', fmt(outer.mean_brier)],
+      ['Outer Spearman', fmt(outer.mean_spearman)],
+      ['Manager action', row.manager_action_contribution || '-']
+    ];
+    dom.part6ReliabilityCards.innerHTML = cards.map(([label, value]) => `<div class="part6-reliability-card"><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></div>`).join('');
+  }
+  if (dom.part6ClaimContract) dom.part6ClaimContract.innerHTML = `<strong>${horizon}M claim contract</strong><span>P(positive benchmark-relative excess return)，不是成功保證、因果敘事或交易指令。</span><span>window selection 只使用 inner validation；outer test used for selection = ${report.outer_test_used_for_selection === false ? 'false' : 'unknown'}。</span><span>SHAP 只解釋模型輸出；five-class=${escapeHtml(row.five_class_status || '-')}，production-ready=${row.five_class_production_ready === true ? 'yes' : 'no'}。</span>`;
+  if (dom.part6ReliabilityWarnings) {
+    const warnings = [];
+    if (Number(outer.worst_auc) < 0.5) warnings.push('最差 outer fold AUC 低於 0.5，存在跨時期失效風險。');
+    if (Number(outer.calibration_warning_count) > 0) warnings.push(`outer calibration warnings=${outer.calibration_warning_count}。`);
+    if (row.manager_action_contribution === 'regime_dependent') warnings.push('經理人 action 特徵的增量效果依 regime 改變，不能穩定歸因。');
+    dom.part6ReliabilityWarnings.textContent = warnings.length ? warnings.join(' ') : '未偵測到額外警示；仍需 Part7 同期證據稽核。';
+  }
+}
+
 function renderPart6BackendVisuals(result) {
   const predictions = backendPredictions(result);
   const shapRows = backendShapRows(result);
@@ -5409,6 +5496,7 @@ function renderPart6BackendVisuals(result) {
   drawPart6ShapFeatureChart(shapAgg);
   drawPart6SingleEventShapChart(shapRows);
   renderPart6BackendTables(predictions, shapRows, shapAgg, stockActionRows);
+  renderPart6Reliability(result);
 }
 
 /* Part7 only: evidence-grounded critic over persisted Part1–Part6 evidence. */
@@ -5432,7 +5520,9 @@ function renderPart7RuntimeCards(info) {
   const cards = [
     ['執行模式', info.mode || '-'],
     ['API Key', info.api_key_configured ? '已在 backend 設定' : '尚未設定'],
-    ['Local RAG 文件', String(info.local_document_count ?? '-')],
+    ['Local RAG 文件', String(info.local_document_count ?? info.local_documents_available ?? '-')],
+    ['PydanticAI', info.pydantic_ai_available === undefined ? (info.orchestration || '-') : (info.pydantic_ai_available ? 'available' : 'optional / 未安裝')],
+    ['Structured output', info.structured_output_schema || 'Part7CriticOutput'],
     ['模型', info.default_model || info.model || '-']
   ];
   dom.part7RuntimeCards.innerHTML = cards.map(([label, value]) => `<div class="part7-runtime-card"><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></div>`).join('');
@@ -5504,6 +5594,9 @@ function part7RenderResult(result) {
     <div class="part7-verdict-card"><small>報告日／天期</small><strong>${escapeHtml(event.report_date || '-')} / ${escapeHtml(event.horizon_months || '-')}M</strong></div>
     <div class="part7-verdict-card"><small>Part6 positive probability</small><strong>${Number.isFinite(probability) ? formatPct(probability) : '-'}</strong></div>
   </div>`;
+  const orchestration = result.orchestration || {};
+  const temporal = result.temporal_audit || {};
+  html += `<section class="part7-audit-contract"><strong>Execution audit</strong><span>orchestrator: ${escapeHtml(orchestration.resolved || orchestration.requested || '-')}</span><span>strict point-in-time: ${temporal.strict ? 'yes' : 'no'}</span><span>future excluded: ${escapeHtml(temporal.future_documents_excluded ?? 0)}</span><span>undated excluded: ${escapeHtml(temporal.undated_documents_excluded ?? 0)}</span></section>`;
   if (events.length) html += `<section class="part7-critic-section"><h3>Selected Part6 events</h3>${events.map(item => `<div class="part7-item"><strong>${escapeHtml(item.manager || '-')} | ${escapeHtml(item.report_date || '-')}</strong><div>${escapeHtml(item.event_id || '')} · ${escapeHtml(item.action_type || '-')} · positive probability ${Number.isFinite(Number(item.positive_probability)) ? formatPct(Number(item.positive_probability)) : '-'}</div></div>`).join('')}</section>`;
 
   if (analysis) {
@@ -5559,7 +5652,12 @@ async function runPart7AnalysisPlaceholder() {
       model: dom.part7ModelInput ? (dom.part7ModelInput.value.trim() || null) : null,
       use_web_search: Boolean(dom.part7WebSearchInput && dom.part7WebSearchInput.checked),
       max_local_chunks: 12,
-      question: dom.part7QuestionInput ? (dom.part7QuestionInput.value.trim() || null) : null
+      question: dom.part7QuestionInput ? (dom.part7QuestionInput.value.trim() || null) : null,
+      orchestration_mode: dom.part7OrchestrationSelect ? dom.part7OrchestrationSelect.value : 'auto',
+      evidence_scope: dom.part7EvidenceScopeSelect ? dom.part7EvidenceScopeSelect.value : 'macro_and_micro',
+      strict_temporal: Boolean(dom.part7StrictTemporalInput && dom.part7StrictTemporalInput.checked),
+      require_counterevidence: Boolean(dom.part7CounterevidenceInput && dom.part7CounterevidenceInput.checked),
+      ticker_focus: dom.part7TickerFocusInput ? dom.part7TickerFocusInput.value.split(',').map(value => value.trim().toUpperCase()).filter(Boolean).slice(0, 25) : []
     };
     const response = await fetch('/api/part7/critic', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
@@ -5569,7 +5667,7 @@ async function runPart7AnalysisPlaceholder() {
     dom.part7Status.textContent = result.status === 'preview'
       ? 'Preview 完成：尚未呼叫 OpenAI；已產生 RAG evidence 與 prompt。'
       : `Critic 完成 · response_id=${result.response_id || '-'}`;
-    renderPart7RuntimeCards({ mode: result.status, api_key_configured: result.status === 'ok', local_document_count: (result.retrieval || {}).local_documents_available, default_model: result.model });
+    renderPart7RuntimeCards({ mode: result.status, api_key_configured: result.status === 'ok', local_document_count: (result.retrieval || {}).local_documents_available, default_model: result.model, orchestration: (result.orchestration || {}).resolved });
     part7RenderResult(result);
   } catch (error) {
     dom.part7Status.textContent = `Part7 執行失敗：${error.message}`;
@@ -5759,7 +5857,11 @@ function drawPart6ClusterMap(result) {
   const node = dom.part6ClusterMap;
   if (!node || !window.Plotly) return;
   const temporal = result && result.shap_result ? result.shap_result.temporal_clustering : null;
-  const clusters = temporal && Array.isArray(temporal.clusters) ? temporal.clusters : [];
+  const clusters = temporal && Array.isArray(temporal.clusters) ? temporal.clusters.map(cluster => ({
+    ...cluster,
+    large_win_rate: cluster.large_win_rate ?? cluster.predicted_large_win_rate ?? 0,
+    large_loss_rate: cluster.large_loss_rate ?? cluster.predicted_large_loss_rate ?? 0
+  })) : [];
   const points = temporal && Array.isArray(temporal.points) ? temporal.points : [];
   if (!points.length) { Plotly.react(node, [], { title: 'TreeSHAP 決策邏輯聚類（資料不足）', height: 460 }, { responsive: true }); return; }
   const clusterMap = new Map(clusters.map(c => [Number(c.cluster), c]));
@@ -5775,6 +5877,7 @@ function drawPart6ClusterMap(result) {
   const styleOrder = Object.keys(styleColors);
   const enrichedPoints = points.map(p => ({
     ...p,
+    positive_probability: p.positive_probability ?? p.direction_signal,
     manager_style_group: p.manager_style_group || predictionStyleMap.get(String(p.event_id || '')) || 'Unknown style'
   }));
   const observedStyles = [...new Set(enrichedPoints.map(p => p.manager_style_group))]
@@ -5824,19 +5927,52 @@ function drawPart6Fidelity(result) {
   const clusters = temporal && Array.isArray(temporal.clusters) ? temporal.clusters : [];
   const cluster = clusters.find(c => Number(c.cluster) === Number(state.part6.activeCluster)) || clusters[0];
   if (!cluster) return;
-  const rows = cluster.fidelity || [];
-  if (dom.part6FidelityHint) dom.part6FidelityHint.textContent = `Cluster ${cluster.cluster}｜${cluster.name}｜${cluster.event_count} events`;
+  const rows = (cluster.fidelity || []).map(row => {
+    const contribution = Number(row.mean_direction_contribution ?? row.mean_shap ?? row.mean_contribution);
+    const cohortMean = Number(row.analysis_cohort_mean ?? row.market_mean);
+    const cohortStd = Number(row.analysis_cohort_std ?? row.market_std);
+    return {
+      ...row,
+      mean_direction_contribution: Number.isFinite(contribution) ? contribution : 0,
+      analysis_cohort_mean: Number.isFinite(cohortMean) ? cohortMean : null,
+      analysis_cohort_std: Number.isFinite(cohortStd) ? cohortStd : null
+    };
+  }).filter(row => row.feature);
+  const method = temporal && temporal.method ? temporal.method : 'direction-model contribution vectors';
+  const contributionLabel = method.includes('TreeSHAP') ? 'TreeSHAP' : 'runtime fallback 歸因';
+  if (dom.part6FidelityHint) dom.part6FidelityHint.textContent = `Cluster ${cluster.cluster}｜${cluster.name}｜${cluster.event_count} events｜${method}`;
+  if (!rows.length) {
+    Plotly.react(dom.part6FidelityShapChart, [], {
+      title: '群組平均方向歸因（此 cluster 無 fidelity rows）', height: 380,
+      annotations: [{ text: '後端未回傳 cluster.fidelity，請重新執行 Part6。', showarrow: false }]
+    }, { displaylogo: false, responsive: true });
+    Plotly.react(dom.part6FidelityRawChart, [], {
+      title: '群組原始特徵分布（無資料）', height: 420
+    }, { displaylogo: false, responsive: true });
+    return;
+  }
+  const orderedRows = rows.slice().sort((a, b) => Math.abs(a.mean_direction_contribution) - Math.abs(b.mean_direction_contribution));
   Plotly.react(dom.part6FidelityShapChart, [{
-    type: 'bar', orientation: 'h', y: rows.map(r => r.feature).reverse(), x: rows.map(r => r.mean_shap).reverse(),
-    marker: { color: rows.map(r => r.mean_shap >= 0 ? '#2187d5' : '#c94c4c').reverse() },
-    hovertemplate: '%{y}<br>mean TreeSHAP=%{x:.4f}<extra></extra>'
-  }], { title: '左：群組平均 TreeSHAP 歸因', height: 380, margin: { l: 190, r: 30, t: 60, b: 45 } }, { displaylogo: false, responsive: true });
+    type: 'bar', orientation: 'h',
+    y: orderedRows.map(row => row.feature),
+    x: orderedRows.map(row => row.mean_direction_contribution),
+    text: orderedRows.map(row => formatNumber(row.mean_direction_contribution, 4)),
+    textposition: 'outside', cliponaxis: false,
+    marker: { color: orderedRows.map(row => row.mean_direction_contribution >= 0 ? '#2187d5' : '#c94c4c') },
+    customdata: orderedRows.map(row => [cluster.event_count, method]),
+    hovertemplate: '%{y}<br>群組平均方向歸因=%{x:.6f}<br>事件數=%{customdata[0]}<br>%{customdata[1]}<extra></extra>'
+  }], {
+    title: `左：群組平均 ${contributionLabel}（正值推高 positive class）`,
+    height: Math.max(380, 230 + orderedRows.length * 58),
+    margin: { l: 210, r: 75, t: 70, b: 60 },
+    xaxis: { title: 'Mean direction contribution', zeroline: true, zerolinewidth: 2, zerolinecolor: '#667784' }
+  }, { displaylogo: false, responsive: true });
   const traces = rows.map((r, i) => {
     const raw = r.raw_values || [];
     const numericRaw = raw.map(Number).filter(Number.isFinite);
     const fallbackMean = numericRaw.length ? numericRaw.reduce((sum, value) => sum + value, 0) / numericRaw.length : 0;
     const fallbackStd = numericRaw.length > 1 ? Math.sqrt(numericRaw.reduce((sum, value) => sum + (value - fallbackMean) ** 2, 0) / (numericRaw.length - 1)) : 1;
-    const reportedMean = Number(r.market_mean), reportedStd = Number(r.market_std);
+    const reportedMean = Number(r.analysis_cohort_mean), reportedStd = Number(r.analysis_cohort_std);
     const mean = Number.isFinite(reportedMean) ? reportedMean : fallbackMean;
     const std = Number.isFinite(reportedStd) && reportedStd > 0 ? reportedStd : (fallbackStd > 0 ? fallbackStd : 1);
     const standardized = raw.map(value => (Number(value) - mean) / std);
@@ -7207,6 +7343,7 @@ function renderPart6BackendVisuals(result) {
   drawPart6ShapFeatureChart(shapAgg);
   drawPart6SingleEventShapChart(shapRows);
   renderPart6BackendTables(predictions, shapRows, shapAgg, stockActionRows);
+  renderPart6Reliability(result);
 }
 
 function renderPart6BackendTables(predictions, shapRows, shapAgg, stockActionRows = []) {
@@ -7785,39 +7922,54 @@ function part6OutcomeText(pred) {
 function part6RenderAnchorCards(result, predictions) {
   const node = part6GetNode('part6AnchorContextCards');
   if (!node) return;
-  const anchor = part6ActiveAnchorFromResult(result, predictions);
-  const p = anchor.prediction || predictions[0] || {};
-  const reportDate = p.report_date || (anchor.report && anchor.report.report_dt) || '';
-  const manager = p.manager || 'No linked prediction event yet';
-  const action = p.action_type || '-';
-  const prob = Number(p.prediction_probability);
-  const future = Number(p.future_12m_excess_return);
-  const styleDev = Number(p.rolling_style_deviation_score);
-  const sectorDev = Number(p.rolling_sector_deviation_score);
-  const actionDev = Number(p.rolling_action_deviation_score);
+  const rows = Array.isArray(predictions) ? predictions : [];
+  const explicitManagers = [
+    ...(typeof activePart5Managers === 'function' ? activePart5Managers() : []),
+    ...rows.map(row => row.manager)
+  ];
+  const managers = [...new Set(explicitManagers.map(value => cleanText(value)).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const reportDates = [...new Set(rows.map(row => cleanText(row.report_date)).filter(Boolean))].sort();
+  const styleStarts = rows.map(row => cleanText(row.style_window_start_date)).filter(Boolean).sort();
+  const styleEnds = rows.map(row => cleanText(row.style_window_end_date)).filter(Boolean).sort();
+  const funds = new Set(rows.map(row => cleanText(row.fund || row.fund_ticker || row.crsp_portno)).filter(Boolean));
+  const actions = [...new Set(rows.map(row => cleanText(row.action_type)).filter(Boolean))].sort();
+  const finite = (key) => rows
+    .map(row => row[key])
+    .filter(value => value !== null && value !== undefined && value !== '')
+    .map(Number)
+    .filter(Number.isFinite);
+  const numericRange = (values, formatter) => values.length
+    ? `${formatter(Math.min(...values))} ～ ${formatter(Math.max(...values))}`
+    : '-';
+  const probabilityRange = numericRange(finite('prediction_probability'), value => formatPct(value));
+  const styleRange = numericRange(finite('rolling_style_deviation_score'), value => formatNumber(value, 3));
+  const sectorRange = numericRange(finite('rolling_sector_deviation_score'), value => formatNumber(value, 3));
+  const actionRange = numericRange(finite('rolling_action_deviation_score'), value => formatNumber(value, 3));
+  const observationRange = numericRange(finite('style_obs_count'), value => formatInt(value));
   const selectedReports = result && result.parsed_state && result.parsed_state.part5 ? Number(result.parsed_state.part5.selected_report_count) : NaN;
-  const activeReportKey = anchor.activeKey || '-';
+  const matchedManagerCount = new Set(rows.map(row => cleanText(row.manager)).filter(Boolean)).size;
+  const managerList = managers.length ? managers.map(escapeHtml).join('、') : '尚未選取經理人';
 
   node.innerHTML = `
     <div class="part6-anchor-card emphasis">
-      <span>Anchor report date from Part5</span>
-      <strong>${reportDate || '-'}</strong>
-      <p>目前 Part6 以 Part5 selected report_date 作為 manager-action event 的 anchor date。active key: ${activeReportKey}</p>
+      <span>Selected manager scope</span>
+      <strong>${formatInt(managers.length)} 位經理人</strong>
+      <p class="part6-manager-scope-list">${managerList}</p>
     </div>
     <div class="part6-anchor-card">
-      <span>Event-time rolling style window</span>
-      <strong>${p.style_window_start_date && p.style_window_end_date ? `${p.style_window_start_date} ~ ${p.style_window_end_date}` : (reportDate ? part6StyleWindowText(reportDate, p.style_window_years || p.training_window_years || 3) : '-')}</strong>
-      <p>strict trailing 36M、排除當日事件；baseline observations: ${Number.isFinite(Number(p.style_obs_count)) ? p.style_obs_count : '-'}。</p>
+      <span>Matched event / report-date coverage</span>
+      <strong>${reportDates.length ? `${reportDates[0]} ～ ${reportDates[reportDates.length - 1]}` : '-'}</strong>
+      <p>${formatInt(rows.length)} events、${formatInt(matchedManagerCount)} matched managers、${formatInt(funds.size)} funds／portfolios；Part5 selected reports: ${Number.isFinite(selectedReports) ? formatInt(selectedReports) : '-'}。</p>
     </div>
     <div class="part6-anchor-card">
-      <span>Selected manager-action event</span>
-      <strong>${manager}</strong>
-      <p>model action type: ${action}<br>selected reports from Part5: ${Number.isFinite(selectedReports) ? selectedReports : '-'}</p>
+      <span>Ex-ante rolling style coverage</span>
+      <strong>${styleStarts.length && styleEnds.length ? `${styleStarts[0]} ～ ${styleEnds[styleEnds.length - 1]}` : '-'}</strong>
+      <p>每個事件各自使用 strict trailing 36M、排除事件當期；baseline observations range: ${observationRange}。<br>actions: ${actions.length ? actions.map(escapeHtml).join('、') : '-'}</p>
     </div>
     <div class="part6-anchor-card">
-      <span>Prediction / style deviation</span>
-      <strong>${Number.isFinite(prob) ? formatPct(prob) : '-'}</strong>
-      <p>future 12M excess: ${Number.isFinite(future) ? formatPct(future) : '-'}<br>style / sector / action deviation: ${Number.isFinite(styleDev) ? formatNumber(styleDev, 3) : '-'} / ${Number.isFinite(sectorDev) ? formatNumber(sectorDev, 3) : '-'} / ${Number.isFinite(actionDev) ? formatNumber(actionDev, 3) : '-'}</p>
+      <span>Selected-scope model ranges</span>
+      <strong>Positive score ${probabilityRange}</strong>
+      <p>style deviation: ${styleRange}<br>sector deviation: ${sectorRange}<br>action deviation: ${actionRange}</p>
     </div>
   `;
 }
@@ -8065,4 +8217,5 @@ function renderPart6BackendVisuals(result) {
   drawPart6ShapFeatureChart(shapAgg);
   drawPart6SingleEventShapChart(shapRows);
   renderPart6BackendTables(predictions, shapRows, shapAgg, stockActionRows);
+  renderPart6Reliability(result);
 }

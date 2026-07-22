@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Tab6 S&P500 Fund Analysis</title>
-  <link rel="stylesheet" href="style.css?v=20260716-part6-multievent-rolling36" />
+  <link rel="stylesheet" href="style.css?v=20260722-fidelity-scope" />
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 </head>
@@ -365,6 +365,12 @@
           <div><span>高信心 positive 數</span><strong id="metricBackendHighProb">-</strong></div>
           <div><span>最高 positive excess 機率</span><strong id="metricBackendTopProb">-</strong></div>
         </div>
+        <div class="part6-reliability-panel">
+          <div class="section-head"><div><h3>Part6 模型穩定性與主張邊界</h3><p class="part6-method-note">模型分數是可失效的量化主張；必須連同 inner validation、未參與選模的 outer test、校準與特徵貢獻一起閱讀。</p></div></div>
+          <div id="part6ReliabilityCards" class="part6-reliability-grid"></div>
+          <div id="part6ClaimContract" class="part6-claim-contract"></div>
+          <div id="part6ReliabilityWarnings" class="inline-status"></div>
+        </div>
 
         <div class="part6-expert-panel">
           <div class="section-head">
@@ -448,6 +454,10 @@
       </div>
       <div id="part7Status" class="inline-status">正在檢查 Part7 RAG 與 OpenAI API 狀態…</div>
 
+      <div class="part7-architecture-strip">
+        <div><strong>OpenAI API</strong><span>推理與原生 web search</span></div><div><strong>RAG</strong><span>同期總經＋個股／基金證據</span></div><div><strong>Pydantic schema</strong><span>限制輸出欄位與 verdict</span></div><div><strong>Human audit</strong><span>保留拒絕、反駁與追問權</span></div>
+      </div>
+
       <div class="part7-control-grid">
         <label class="control">Part6 events（可多選；預設跟隨 Part6 SHAP）
           <select id="part7EventSelect" multiple size="6"><option value="">自動選擇最高機率事件</option></select>
@@ -460,7 +470,18 @@
         <label class="control">OpenAI model
           <input id="part7ModelInput" value="gpt-5.6" autocomplete="off" />
         </label>
+        <label class="control">Agent orchestration
+          <select id="part7OrchestrationSelect"><option value="auto" selected>Auto（優先 PydanticAI）</option><option value="pydantic_ai">PydanticAI</option><option value="openai_responses">OpenAI Responses</option></select>
+        </label>
+        <label class="control">Evidence scope
+          <select id="part7EvidenceScopeSelect"><option value="macro_and_micro" selected>總經＋個股／基金</option><option value="macro_only">只看總經／regime</option><option value="micro_only">只看個股／基金</option></select>
+        </label>
+        <label class="control">Ticker focus（逗號分隔）
+          <input id="part7TickerFocusInput" placeholder="例如 AAPL, MSFT" autocomplete="off" />
+        </label>
         <label class="part7-check"><input id="part7WebSearchInput" type="checkbox" checked /> 同期 web search（新聞／FOMC／基金文本）</label>
+        <label class="part7-check"><input id="part7StrictTemporalInput" type="checkbox" checked /> 嚴格 point-in-time：不得用報告日後文件</label>
+        <label class="part7-check"><input id="part7CounterevidenceInput" type="checkbox" checked /> 強制尋找反證與替代解釋</label>
       </div>
 
       <label class="control part7-question">Critic 研究問題（選填）
@@ -474,6 +495,6 @@
     </section>
   </main>
 
-  <script src="app.js?v=20260716-part6-multievent-rolling36"></script>
+  <script src="app.js?v=20260722-fidelity-scope"></script>
 </body>
 </html>

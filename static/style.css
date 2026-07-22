@@ -22,6 +22,60 @@
   --radius: 8px;
 }
 
+/* Evidence-audit extensions: additive only; existing Part1-Part6 visual language is preserved. */
+.part6-reliability-panel {
+  margin: 18px 0;
+  padding: 18px;
+  border: 1px solid rgba(39, 103, 143, .22);
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(238, 247, 251, .9), rgba(255, 251, 240, .88));
+}
+.part6-reliability-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+  gap: 10px;
+}
+.part6-reliability-card, .part7-architecture-strip > div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid rgba(41, 91, 119, .16);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .86);
+}
+.part6-reliability-card small, .part7-architecture-strip span { color: var(--muted, #64727d); }
+.part6-claim-contract {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-left: 4px solid #376f8f;
+  background: rgba(255,255,255,.7);
+}
+.part7-architecture-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0 18px;
+}
+.part7-audit-contract {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 12px 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #edf6f7;
+  border: 1px solid rgba(31, 111, 128, .18);
+}
+@media (max-width: 780px) {
+  .part7-architecture-strip { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 520px) {
+  .part7-architecture-strip { grid-template-columns: 1fr; }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -1192,6 +1246,14 @@ th {
   color: #405363;
   font-size: 12px;
   line-height: 1.48;
+}
+
+.part6-anchor-card .part6-manager-scope-list {
+  max-height: 92px;
+  overflow: auto;
+  padding-right: 4px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 
 .part6-anchor-card.emphasis {
