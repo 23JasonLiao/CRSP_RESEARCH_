@@ -568,6 +568,14 @@ def health() -> Dict[str, Any]:
         "backend_import_error": None if BACKEND_IMPORT_ERROR is None else repr(BACKEND_IMPORT_ERROR),
         "openai_api_key_configured": bool(os.getenv("OPENAI_API_KEY")),
         "pydantic_ai_available": _pydantic_ai_available(),
+        "ui_layout": "single_stage_part1_to_part7_workspace",
+        "ui_detail_mode": "single_active_stage_without_payload_mutation",
+        "ui_overview_layout": "removed",
+        "part5_quick_pickers": "collapsed_on_demand",
+        "frontend_payload_contract": "visual-state-v2",
+        "part1_to_part5_payload_contract_unchanged": True,
+        "part5_multi_select": "ctrl_or_cmd_additive",
+        "part5_zero_bond_display": "completed_allocation_bond",
     }
 
 

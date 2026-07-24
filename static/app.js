@@ -303,6 +303,16 @@ const state = {
 };
 
 const dom = {};
+const part5ModifierKeys = { ctrl: false, meta: false };
+const WORKSPACE_STAGE_DEFS = [
+  { id: "part1Section", code: "01", label: "Part1｜市場情境", description: "市場相對位置、A/B case 與 benchmark separation", available: () => true },
+  { id: "part2Section", code: "02", label: "Part2｜Cohort 因子", description: "Point-in-time 因子條件與可追蹤 cohort", available: () => !document.getElementById("part2Section")?.classList.contains("hidden") },
+  { id: "part3Section", code: "03", label: "Part3｜經理人", description: "經理人分布、比較範圍與研究樣本身份", available: () => !document.getElementById("part3Section")?.classList.contains("hidden") },
+  { id: "part4Section", code: "04", label: "Part4｜Style prior", description: "Indicator、Radar、相似群組與 style drift", available: () => !document.getElementById("part4Section")?.classList.contains("hidden") },
+  { id: "part5Stage", code: "05", label: "Part5｜揭露動作", description: "個股揭露與非個股曝險整合檢視", available: () => true },
+  { id: "part6Section", code: "06", label: "Part6｜模型事件", description: "真實持股動作與模型事件連結", available: () => true },
+  { id: "part7Section", code: "07", label: "Part7｜證據稽核", description: "Evidence-grounded LLM critic", available: () => true }
+];
 
 window.addEventListener("DOMContentLoaded", init);
 
@@ -477,6 +487,10 @@ function init() {
 
   updateManualBenchmark();
   updateControlStates();
+  initPart1To5WorkspaceTabs();
+  initPart1To5WorkspaceViewMode();
+  initPart1To5WorkspaceResize();
+  initPart5MultiSelectModifiers();
 
   if (!window.Plotly || !window.Papa) {
     setStatus("Plotly 或 PapaParse 尚未載入，請確認網路可連到 CDN。");
@@ -488,6 +502,244 @@ function init() {
   } else {
     loadDefaultData();
   }
+}
+
+function initPart5MultiSelectModifiers() {
+  const sync = event => {
+    part5ModifierKeys.ctrl = Boolean(event.ctrlKey);
+    part5ModifierKeys.meta = Boolean(event.metaKey);
+  };
+  window.addEventListener("keydown", sync);
+  window.addEventListener("keyup", sync);
+  window.addEventListener("blur", () => {
+    part5ModifierKeys.ctrl = false;
+    part5ModifierKeys.meta = false;
+  });
+}
+
+function initPart1To5WorkspaceTabs() {
+  const workspace = document.querySelector(".part1-to5-workspace");
+  if (!workspace) return;
+
+  const activateTab = button => {
+    if (!button || button.disabled) return;
+    const quadrant = button.closest(".workspace-quadrant");
+    const tabList = button.closest(".workspace-tabs");
+    if (!quadrant || !tabList) return;
+
+    tabList.querySelectorAll("[data-workspace-tab]").forEach(candidate => {
+      const isActive = candidate === button;
+      candidate.classList.toggle("active", isActive);
+      candidate.setAttribute("aria-selected", String(isActive));
+      const panel = document.getElementById(candidate.dataset.workspaceTab);
+      if (panel) panel.classList.toggle("workspace-tab-inactive", !isActive);
+    });
+
+    quadrant.scrollTo({ top: 0, behavior: "smooth" });
+    window.requestAnimationFrame(() => {
+      if (!window.Plotly?.Plots?.resize) return;
+      quadrant.querySelectorAll(".js-plotly-plot:not(.hidden)").forEach(chart => window.Plotly.Plots.resize(chart));
+    });
+  };
+
+  workspace.querySelectorAll(".workspace-tabs").forEach(tabList => {
+    tabList.addEventListener("click", event => {
+      const button = event.target.closest("[data-workspace-tab]");
+      if (button) activateTab(button);
+    });
+  });
+
+  workspace.querySelectorAll("[data-availability-target]").forEach(button => {
+    const availabilityTarget = document.getElementById(button.dataset.availabilityTarget);
+    if (!availabilityTarget) return;
+    const tabList = button.closest(".workspace-tabs");
+    const syncAvailability = () => {
+      const available = !availabilityTarget.classList.contains("hidden");
+      button.disabled = !available;
+      button.setAttribute("aria-disabled", String(!available));
+      setWorkspaceStageAvailability(button.dataset.workspaceTab, available);
+
+      const activeButton = tabList?.querySelector(".workspace-tab.active");
+      if (available && (!activeButton || activeButton.disabled)) {
+        activateTab(button);
+      } else if (!available && activeButton === button) {
+        const fallback = Array.from(tabList.querySelectorAll(".workspace-tab")).find(candidate => !candidate.disabled);
+        if (fallback) activateTab(fallback);
+      }
+    };
+    new MutationObserver(syncAvailability).observe(availabilityTarget, { attributes: true, attributeFilter: ["class"] });
+    syncAvailability();
+  });
+}
+
+function setWorkspaceStageAvailability(panelId, available) {
+  const workspace = document.querySelector(".part1-to5-workspace");
+  const panel = document.getElementById(panelId);
+  if (!workspace || !panel) return;
+  panel.classList.toggle("workspace-stage-locked", !available);
+  panel.setAttribute("aria-disabled", String(!available));
+
+  const navButton = workspace.querySelector(`[data-stage-focus="${panelId}"]`);
+  if (navButton) {
+    navButton.disabled = !available;
+    navButton.setAttribute("aria-disabled", String(!available));
+  }
+  const focusButton = panel.querySelector(".workspace-tile-focus");
+  if (focusButton) focusButton.disabled = !available;
+  const status = panel.querySelector(".workspace-card-status");
+  if (status) {
+    status.textContent = available ? "READY" : "LOCKED";
+    status.classList.toggle("ready", available);
+  }
+
+  if (!available && panel.classList.contains("workspace-stage-focused")) {
+    showPart1To5WorkspaceOverview();
+  }
+  syncWorkspaceExpertStrip();
+}
+
+function initPart1To5WorkspaceViewMode() {
+  const workspace = document.querySelector(".part1-to5-workspace");
+  const overviewButton = document.getElementById("workspaceOverviewBtn");
+  if (!workspace || !overviewButton) return;
+
+  for (const stage of WORKSPACE_STAGE_DEFS) {
+    const panel = document.getElementById(stage.id);
+    if (!panel) continue;
+    panel.classList.add("workspace-stage-card");
+    panel.dataset.stageLabel = stage.label;
+
+    const context = document.createElement("div");
+    context.className = "workspace-card-context";
+    context.innerHTML = `<span class="workspace-card-code">EVIDENCE ${escapeHtml(stage.code)}</span><p>${escapeHtml(stage.description)}</p><span class="workspace-card-status">READY</span>`;
+    const sectionHead = panel.querySelector(":scope > .section-head");
+    if (sectionHead) sectionHead.insertAdjacentElement("afterend", context);
+    else panel.insertAdjacentElement("afterbegin", context);
+
+    const focusButton = document.createElement("button");
+    focusButton.type = "button";
+    focusButton.className = "workspace-tile-focus";
+    focusButton.textContent = "詳細";
+    focusButton.setAttribute("aria-label", `開啟 ${stage.label} 詳細操作`);
+    focusButton.addEventListener("click", event => {
+      event.stopPropagation();
+      focusPart1To5WorkspaceStage(stage.id);
+    });
+    panel.appendChild(focusButton);
+    setWorkspaceStageAvailability(stage.id, stage.available());
+  }
+
+  overviewButton.addEventListener("click", showPart1To5WorkspaceOverview);
+  workspace.querySelectorAll("[data-stage-focus]").forEach(button => {
+    button.addEventListener("click", () => focusPart1To5WorkspaceStage(button.dataset.stageFocus));
+  });
+  initWorkspaceExpertStrip();
+  showPart1To5WorkspaceOverview();
+}
+
+function initWorkspaceExpertStrip() {
+  const sourceIds = [
+    "metricTotal", "metricA", "metricB", "metricP2FundsA", "metricP2FundsB",
+    "metricP5Reports", "part3Status"
+  ];
+  const observer = new MutationObserver(syncWorkspaceExpertStrip);
+  sourceIds.forEach(id => {
+    const node = document.getElementById(id);
+    if (node) observer.observe(node, { childList: true, characterData: true, subtree: true });
+  });
+  window.__workspaceExpertStripObserver = observer;
+  syncWorkspaceExpertStrip();
+}
+
+function syncWorkspaceExpertStrip() {
+  const setValue = (id, value) => {
+    const node = document.getElementById(id);
+    if (node) node.textContent = value || "—";
+  };
+  const text = id => cleanText(document.getElementById(id)?.textContent) || "—";
+  setValue("workspaceUniverseValue", text("metricTotal"));
+  setValue("workspacePart1Value", `A ${text("metricA")} · B ${text("metricB")}`);
+  setValue("workspacePart2Value", `A ${text("metricP2FundsA")} · B ${text("metricP2FundsB")}`);
+  const managerCount = (state.radarRecords || []).length || (state.latestManagers || []).length || (state.pendingManagers ? state.pendingManagers.size : 0);
+  setValue("workspaceManagerValue", managerCount ? formatInt(managerCount) : "—");
+  setValue("workspacePart5Value", text("metricP5Reports"));
+}
+
+function showPart1To5WorkspaceOverview() {
+  const workspace = document.querySelector(".part1-to5-workspace");
+  const overviewButton = document.getElementById("workspaceOverviewBtn");
+  if (!workspace) return;
+  workspace.dataset.overviewLayout = "wide-two-column-plus-blank";
+  workspace.classList.add("workspace-dashboard-mode");
+  workspace.classList.remove("workspace-stage-focus-mode");
+  workspace.querySelectorAll(".workspace-stage-card").forEach(panel => panel.classList.remove("workspace-stage-focused"));
+  workspace.querySelectorAll("[data-stage-focus]").forEach(button => {
+    button.classList.remove("active");
+    button.setAttribute("aria-pressed", "false");
+  });
+  if (overviewButton) {
+    overviewButton.classList.add("active");
+    overviewButton.setAttribute("aria-pressed", "true");
+  }
+  resizePart1To5WorkspacePlots(workspace);
+}
+
+function focusPart1To5WorkspaceStage(panelId) {
+  const workspace = document.querySelector(".part1-to5-workspace");
+  const panel = document.getElementById(panelId);
+  if (!workspace || !panel || panel.classList.contains("workspace-stage-locked")) return;
+
+  workspace.classList.remove("workspace-dashboard-mode");
+  workspace.classList.add("workspace-stage-focus-mode");
+  workspace.dataset.overviewLayout = "focused-stage";
+  workspace.querySelectorAll(".workspace-stage-card").forEach(candidate => {
+    candidate.classList.toggle("workspace-stage-focused", candidate === panel);
+  });
+  workspace.querySelectorAll("[data-stage-focus]").forEach(button => {
+    const isActive = button.dataset.stageFocus === panelId;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-pressed", String(isActive));
+  });
+  const overviewButton = document.getElementById("workspaceOverviewBtn");
+  if (overviewButton) {
+    overviewButton.classList.remove("active");
+    overviewButton.setAttribute("aria-pressed", "false");
+  }
+  panel.scrollTop = 0;
+  if (panelId === "part3Section") {
+    const managerChart = document.getElementById("managerChart");
+    if (managerChart) {
+      managerChart.style.setProperty("height", "calc(100% - 46px)");
+      managerChart.style.setProperty("min-height", "560px");
+    }
+  }
+  resizePart1To5WorkspacePlots(panel);
+}
+
+function resizePart1To5WorkspacePlots(root) {
+  window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+    if (!window.Plotly?.Plots?.resize || !root) return;
+    root.querySelectorAll(".js-plotly-plot:not(.hidden)").forEach(chart => window.Plotly.Plots.resize(chart));
+  }));
+}
+
+function initPart1To5WorkspaceResize() {
+  const workspace = document.querySelector(".part1-to5-workspace");
+  if (!workspace || typeof ResizeObserver === "undefined") return;
+
+  let resizeFrame = 0;
+  const observer = new ResizeObserver(() => {
+    window.cancelAnimationFrame(resizeFrame);
+    resizeFrame = window.requestAnimationFrame(() => {
+      if (!window.Plotly?.Plots?.resize) return;
+      workspace.querySelectorAll(".js-plotly-plot").forEach(chart => {
+        if (!chart.classList.contains("hidden")) window.Plotly.Plots.resize(chart);
+      });
+    });
+  });
+
+  workspace.querySelectorAll(".workspace-quadrant").forEach(quadrant => observer.observe(quadrant));
+  window.__part1To5WorkspaceResizeObserver = observer;
 }
 
 async function loadDefaultData() {
@@ -1374,29 +1626,8 @@ function renderPart2() {
 }
 
 function renderPart2ResultTables(block, level, available, allA, allB, selectedA, selectedB, compareMode, hasActiveRegions) {
-  const tableStack = document.createElement("div");
-  tableStack.className = "part2-table-stack";
-  block.appendChild(tableStack);
-
-  const columns = part2TableColumns(level.key, available);
-  const rowsA = hasActiveRegions ? selectedA : allA;
-  const horizonTitle = HORIZONS[state.horizon].title;
-  appendPart2ResultTable(
-    tableStack,
-    `Part2 ${level.label} A ${hasActiveRegions ? "篩選結果" : "計算結果"}（${horizonTitle}）`,
-    rowsA,
-    columns
-  );
-
-  if (compareMode) {
-    const rowsB = hasActiveRegions ? selectedB : allB;
-    appendPart2ResultTable(
-      tableStack,
-      `Part2 ${level.label} B ${hasActiveRegions ? "篩選結果" : "計算結果"}（${horizonTitle}）`,
-      rowsB,
-      columns
-    );
-  }
+  // Part2 的資料列仍由原本 state 與 payload 流程保留；單畫面工作台只呈現可操作的 histogram。
+  return;
 }
 
 function appendPart2ResultTable(parent, title, rows, columns) {
@@ -3188,12 +3419,16 @@ function drawPart5Charts(reports, detailRows) {
 
   const x = trendRows.map(row => row.label);
   const stock = trendRows.map(row => row.stockPct);
-  const bond = trendRows.map(row => row.bondPct);
+  const bond = trendRows.map(row =>
+    Number.isFinite(row.bondPct) && row.bondPct > 0 ? row.bondPct : row.stackBondPct
+  );
   const cash = trendRows.map(row => row.cashPct);
   const stackStock = trendRows.map(row => row.stackStockPct);
   const stackBond = trendRows.map(row => row.stackBondPct);
   const stackCash = trendRows.map(row => row.stackCashPct);
-  const stockBondGap = trendRows.map(row => row.stockBondGap);
+  const stockBondGap = trendRows.map((row, index) =>
+    Number.isFinite(row.stockPct) && Number.isFinite(bond[index]) ? row.stockPct - bond[index] : row.stockBondGap
+  );
   const yields = trendRows.map(row => row.yield10y);
   const selectedSet = new Set(state.part5.brushedPeriodLabels || []);
 
@@ -3211,7 +3446,7 @@ function drawPart5Charts(reports, detailRows) {
 
   Plotly.react("part5OverviewChart", [
     { type: "scatter", mode: "lines+markers", x, y: stock, name: "平均股票比例", line: { color: "#1677c2", width: 2.4 }, marker: { size: 6 }, hovertemplate: "%{x}<br>股票：%{y:.2%}<extra></extra>" },
-    { type: "scatter", mode: "lines+markers", x, y: bond, name: "平均債券比例", line: { color: "#12a59a", width: 2.4 }, marker: { size: 6 }, hovertemplate: "%{x}<br>債券：%{y:.2%}<extra></extra>" },
+    { type: "scatter", mode: "lines+markers", x, y: bond, name: "平均債券比例（0 時補值）", line: { color: "#12a59a", width: 2.4 }, marker: { size: 6 }, hovertemplate: "%{x}<br>債券（0/缺失時採配置補值）：%{y:.2%}<extra></extra>" },
     { type: "scatter", mode: "lines+markers", x, y: stockBondGap, name: "股債差", line: { color: "#df6b57", width: 2.1, dash: "dot" }, marker: { size: 6 }, hovertemplate: "%{x}<br>股票-債券：%{y:.2%}<extra></extra>" },
     { type: "scatter", mode: "lines+markers", x, y: yields, name: "10 年期殖利率", yaxis: "y2", line: { color: "#d88c18", width: 2.6 }, marker: { size: 7 }, hovertemplate: "%{x}<br>殖利率：%{y:.2f}%<extra></extra>" }
   ], {
@@ -3356,6 +3591,26 @@ function part5SelectedCustomData(eventData) {
   return out;
 }
 
+function part5IsAdditiveSelection(eventData) {
+  const sourceEvent = eventData?.event || eventData?.originalEvent || eventData;
+  return Boolean(sourceEvent?.ctrlKey || sourceEvent?.metaKey || part5ModifierKeys.ctrl || part5ModifierKeys.meta);
+}
+
+function updatePart5KeySelection(existingKeys, activeKey, key, additive) {
+  if (!additive) return { brushedKeys: [], activeKey: key, selectedKeys: [key] };
+
+  const current = Array.from(new Set([
+    ...((existingKeys || []).map(cleanText).filter(Boolean)),
+    ...(!(existingKeys || []).length && activeKey ? [cleanText(activeKey)] : [])
+  ]));
+  const next = current.includes(key) ? current.filter(item => item !== key) : [...current, key];
+  return {
+    brushedKeys: next,
+    activeKey: next.includes(key) ? key : (next[next.length - 1] || ""),
+    selectedKeys: next
+  };
+}
+
 function part5SelectedManagerNames(eventData) {
   return part5SelectedCustomData(eventData).filter(Boolean).sort();
 }
@@ -3407,7 +3662,7 @@ function drawPart5ReportScatter(reports, detailRows = []) {
   });
 
   Plotly.react("part5ReportScatterChart", traces, {
-    title: `Part 5：基金報告配置散點圖（${formatInt(rows.length)} 筆 beta 個股持股；可框選或點選）`,
+    title: `Part 5：基金報告配置散點圖（${formatInt(rows.length)} 筆 beta 個股持股；Ctrl / Cmd 點擊可多選）`,
     height: 430,
     margin: { l: 62, r: 28, t: 62, b: 58 },
     dragmode: "select",
@@ -3423,10 +3678,9 @@ function drawPart5ReportScatter(reports, detailRows = []) {
     if (!keys.length) return;
     state.part5.brushedReportKeys = keys;
     state.part5.activeReportKey = keys[0];
-    const selectedReports = part5FilterReportsByKeys(reports, keys);
     const allHoldingRows = filterPart5Holdings({ useDetailFilters: false, useFocus: true, useBrush: true });
     renderPart5ReportDetail(reports);
-    renderPart5ReportPicker(selectedReports, detailRows);
+    renderPart5ReportPicker(reports, detailRows);
     renderPart5TopHoldingPicker(reports, detailRows, allHoldingRows);
     updatePart5BrushStatus(reports, detailRows, allHoldingRows);
     setPart5Status(`已框選 ${formatInt(keys.length)} 個基金報告，基金報告快速選取已切換成框選結果。`);
@@ -3434,12 +3688,20 @@ function drawPart5ReportScatter(reports, detailRows = []) {
   resetPlotlyHandler(plot, "plotly_click", eventData => {
     const point = eventData && eventData.points && eventData.points[0];
     if (!point || point.customdata == null) return;
-    state.part5.brushedReportKeys = [];
-    state.part5.activeReportKey = String(Array.isArray(point.customdata) ? point.customdata[0] : point.customdata);
-    const selectedReports = part5FilterReportsByKeys(reports, [state.part5.activeReportKey]);
+    const key = String(Array.isArray(point.customdata) ? point.customdata[0] : point.customdata);
+    const selection = updatePart5KeySelection(
+      state.part5.brushedReportKeys,
+      state.part5.activeReportKey,
+      key,
+      part5IsAdditiveSelection(eventData)
+    );
+    state.part5.brushedReportKeys = selection.brushedKeys;
+    state.part5.activeReportKey = selection.activeKey;
     renderPart5ReportDetail(reports);
-    renderPart5ReportPicker(selectedReports, detailRows);
-    setPart5Status("已點選基金報告，基金報告快速選取已切換成該基金報告；散點圖仍保留目前範圍的個股持股點。");
+    renderPart5ReportPicker(reports, detailRows);
+    setPart5Status(selection.selectedKeys.length > 1
+      ? `已用 Ctrl / Cmd 選取 ${formatInt(selection.selectedKeys.length)} 個基金報告。`
+      : (selection.selectedKeys.length ? "已選取 1 個基金報告；Ctrl / Cmd 點擊可繼續累加。" : "已取消基金報告選取。"));
   });
 }
 
@@ -3513,9 +3775,9 @@ function drawPart5TopHoldingsChart(rows) {
     type: "bar", orientation: "h",
     x: ranked.map(row => row.score), y: ranked.map(row => row.label),
     customdata: ranked.map(row => [row.searchKey, row.sector, row.avgStockBeta, row.totalWeightedBeta, row.avgHoldingPct]),
-    marker: { color: ranked.map(row => selectedKeys.has(row.searchKey) ? "#d13f31" : row.color) },
+    marker: { color: part5TopHoldingSelectionColors(ranked, selectedKeys) },
     hovertemplate: "%{y}<br>Sector：%{customdata[1]}<br>beta_adjusted_holding_score：%{x:.6f}<br>平均 stock_beta：%{customdata[2]:.4f}<br>合計 weighted_beta：%{customdata[3]:.6f}<br>平均持股占TNA：%{customdata[4]:.2%}<extra></extra>"
-  }], { title: "Part 5：細看 Top 持股（beta-adjusted，可框選或點選）", height: 410, dragmode: "select", margin: { l: 190, r: 24, t: 58, b: 50 }, xaxis: { title: "beta_adjusted_holding_score", zeroline: false }, yaxis: { automargin: true } }, { displaylogo: false, responsive: true, modeBarButtonsToAdd: ["select2d", "lasso2d"], modeBarButtonsToRemove: ["hoverClosestCartesian", "hoverCompareCartesian"] });
+  }], { title: "Part 5：細看 Top 持股（Ctrl / Cmd 點擊可多選）", height: 410, dragmode: "select", margin: { l: 190, r: 24, t: 58, b: 50 }, xaxis: { title: "beta_adjusted_holding_score", zeroline: false }, yaxis: { automargin: true } }, { displaylogo: false, responsive: true, modeBarButtonsToAdd: ["select2d", "lasso2d"], modeBarButtonsToRemove: ["hoverClosestCartesian", "hoverCompareCartesian"] });
   const plot = document.getElementById("part5TopHoldingsChart");
   resetPlotlyHandler(plot, "plotly_selected", eventData => {
     const keys = part5SelectedCustomData(eventData);
@@ -3524,9 +3786,8 @@ function drawPart5TopHoldingsChart(rows) {
     state.part5.activeHoldingKey = keys[0];
     const currentReports = filterPart5Reports({ useFocus: true, useBrush: true });
     const allHoldingRows = filterPart5Holdings({ useDetailFilters: false, useFocus: true, useBrush: true });
-    const selectedHoldingRows = part5FilterHoldingsByKeys(allHoldingRows, keys);
     renderPart5TopHoldingDetail(allHoldingRows);
-    renderPart5TopHoldingPicker(currentReports, rows, selectedHoldingRows);
+    renderPart5TopHoldingPicker(currentReports, rows, allHoldingRows);
     updatePart5BrushStatus(currentReports, rows, allHoldingRows);
     setPart5Status(`已框選 ${formatInt(keys.length)} 個 Top 持股，Top 持股快速選取已切換成框選結果。`);
   });
@@ -3534,13 +3795,23 @@ function drawPart5TopHoldingsChart(rows) {
     const point = eventData && eventData.points && eventData.points[0];
     const key = point && point.customdata ? cleanText(point.customdata[0]) : "";
     if (!key) return;
-    state.part5.brushedHoldingKeys = [];
-    state.part5.activeHoldingKey = key;
+    const selection = updatePart5KeySelection(
+      state.part5.brushedHoldingKeys,
+      state.part5.activeHoldingKey,
+      key,
+      part5IsAdditiveSelection(eventData)
+    );
+    state.part5.brushedHoldingKeys = selection.brushedKeys;
+    state.part5.activeHoldingKey = selection.activeKey;
     const currentReports = filterPart5Reports({ useFocus: true, useBrush: true });
     const allHoldingRows = filterPart5Holdings({ useDetailFilters: false, useFocus: true, useBrush: true });
-    const selectedHoldingRows = part5FilterHoldingsByKeys(allHoldingRows, [key]);
     renderPart5TopHoldingDetail(allHoldingRows);
-    renderPart5TopHoldingPicker(currentReports, rows, selectedHoldingRows);
+    renderPart5TopHoldingPicker(currentReports, rows, allHoldingRows);
+    const selectedSet = new Set(selection.selectedKeys);
+    Plotly.restyle(plot, { "marker.color": [part5TopHoldingSelectionColors(ranked, selectedSet)] });
+    setPart5Status(selection.selectedKeys.length > 1
+      ? `已用 Ctrl / Cmd 選取 ${formatInt(selection.selectedKeys.length)} 個 Top 持股。`
+      : (selection.selectedKeys.length ? `已選取 ${key}；Ctrl / Cmd 點擊可繼續累加。` : "已取消 Top 持股選取。"));
   });
 }
 
@@ -3612,20 +3883,36 @@ function renderPart5ReportPicker(reports, detailRows) {
   if (!dom.part5ReportPickerStatus || !dom.part5ReportPickerTable) return;
   const rows = (reports || []).slice().sort((a, b) => b.reportDateMs - a.reportDateMs).slice(0, 500);
   if (!rows.length) { dom.part5ReportPickerStatus.textContent = "目前範圍沒有可選基金報告"; dom.part5ReportPickerTable.innerHTML = ""; return; }
-  dom.part5ReportPickerStatus.textContent = `可直接點選 ${formatInt(rows.length)} 個基金報告`;
+  dom.part5ReportPickerStatus.textContent = `${formatInt(rows.length)} 個基金報告；Ctrl / Cmd 點擊可多選`;
   const activeReportKeys = new Set(state.part5.brushedReportKeys && state.part5.brushedReportKeys.length ? state.part5.brushedReportKeys : (state.part5.activeReportKey ? [state.part5.activeReportKey] : []));
-  const body = rows.map(row => `<tr class="part5-click-row${activeReportKeys.has(row.reportKey) ? " active" : ""}" data-report-key="${escapeHtml(row.reportKey)}"><td><button type="button" class="part5-mini-button" data-report-key="${escapeHtml(row.reportKey)}">選取</button></td><td>${escapeHtml(row.report_dt || "-")}</td><td>${escapeHtml(row.fund_ticker || row.crsp_portno || "-")}</td><td>${escapeHtml(row.fund_name || "-")}</td><td>${escapeHtml(formatPct(row.stockPct))}</td><td>${escapeHtml(formatPct(row.bondPct))}</td><td>${escapeHtml(formatYield(row.yield10y))}</td></tr>`).join("");
-  dom.part5ReportPickerTable.innerHTML = `<details class="table-panel" open><summary><span class="table-title">基金報告快速選取</span><span class="table-count">${formatInt(rows.length)} 筆</span></summary><div class="table-scroll part5-picker-scroll"><table><thead><tr><th>操作</th><th>報告日</th><th>基金</th><th>基金名稱</th><th>股票</th><th>債券</th><th>殖利率</th></tr></thead><tbody>${body}</tbody></table></div></details>`;
+  const body = rows.map(row => {
+    const isActive = activeReportKeys.has(row.reportKey);
+    return `<button type="button" class="part5-selection-card part5-click-row${isActive ? " active" : ""}" data-report-key="${escapeHtml(row.reportKey)}" aria-pressed="${isActive}">
+      <span class="selection-card-kicker">${escapeHtml(row.report_dt || "-")} · ${escapeHtml(row.fund_ticker || row.crsp_portno || "-")}</span>
+      <strong>${escapeHtml(row.fund_name || "未命名基金")}</strong>
+      <span class="selection-card-metrics"><span>股票 <b>${escapeHtml(formatPct(row.stockPct))}</b></span><span>債券 <b>${escapeHtml(formatPct(row.bondPct))}</b></span><span>10Y <b>${escapeHtml(formatYield(row.yield10y))}</b></span></span>
+    </button>`;
+  }).join("");
+  dom.part5ReportPickerTable.innerHTML = `<div class="part5-selection-card-grid" role="listbox" aria-multiselectable="true" aria-label="基金報告快速選取">${body}</div>`;
   dom.part5ReportPickerTable.onclick = event => {
     const target = event.target.closest("[data-report-key]");
     if (!target) return;
     const key = cleanText(target.getAttribute("data-report-key"));
     if (!key) return;
-    state.part5.brushedReportKeys = [];
-    state.part5.activeReportKey = key;
+    const selection = updatePart5KeySelection(
+      state.part5.brushedReportKeys,
+      state.part5.activeReportKey,
+      key,
+      part5IsAdditiveSelection(event)
+    );
+    state.part5.brushedReportKeys = selection.brushedKeys;
+    state.part5.activeReportKey = selection.activeKey;
     renderPart5ReportDetail(reports);
-    highlightPart5PickerRows(dom.part5ReportPickerTable, "data-report-key", key);
-    setPart5Status("已用快速清單選取基金報告，下方 Drill-down 已更新。");
+    highlightPart5PickerRows(dom.part5ReportPickerTable, "data-report-key", selection.selectedKeys);
+    drawPart5ReportScatter(reports, detailRows);
+    setPart5Status(selection.selectedKeys.length > 1
+      ? `快速選取已累加 ${formatInt(selection.selectedKeys.length)} 個基金報告。`
+      : (selection.selectedKeys.length ? "已選取 1 個基金報告；按住 Ctrl / Cmd 可累加。" : "已取消基金報告選取。"));
   };
 }
 
@@ -3633,26 +3920,47 @@ function renderPart5TopHoldingPicker(reports, detailRows, allHoldingRows) {
   if (!dom.part5TopHoldingPickerStatus || !dom.part5TopHoldingPickerTable) return;
   const ranked = aggregatePart5TopHoldings(allHoldingRows || []).slice(0, 500);
   if (!ranked.length) { dom.part5TopHoldingPickerStatus.textContent = "目前範圍沒有可選 Top 持股"; dom.part5TopHoldingPickerTable.innerHTML = ""; return; }
-  dom.part5TopHoldingPickerStatus.textContent = `可直接點選 ${formatInt(ranked.length)} 個持股`;
+  dom.part5TopHoldingPickerStatus.textContent = `${formatInt(ranked.length)} 個持股；Ctrl / Cmd 點擊可多選`;
   const activeHoldingKeys = new Set(state.part5.brushedHoldingKeys && state.part5.brushedHoldingKeys.length ? state.part5.brushedHoldingKeys : (state.part5.activeHoldingKey ? [state.part5.activeHoldingKey] : []));
-  const body = ranked.map((row, index) => `<tr class="part5-click-row${activeHoldingKeys.has(row.searchKey) ? " active" : ""}" data-holding-key="${escapeHtml(row.searchKey)}"><td><button type="button" class="part5-mini-button" data-holding-key="${escapeHtml(row.searchKey)}">選取</button></td><td>${formatInt(index + 1)}</td><td>${escapeHtml(row.label || row.searchKey)}</td><td>${escapeHtml(row.sector || "-")}</td><td>${formatInt(row.count)}</td><td>${escapeHtml(formatPct(row.avgHoldingPct))}</td><td>${escapeHtml(formatValue(row.avgStockBeta, "num"))}</td><td>${escapeHtml(formatValue(row.totalWeightedBeta, "num"))}</td><td>${escapeHtml(formatValue(row.score, "num"))}</td></tr>`).join("");
-  dom.part5TopHoldingPickerTable.innerHTML = `<details class="table-panel" open><summary><span class="table-title">Top 持股快速選取</span><span class="table-count">${formatInt(ranked.length)} 檔持股</span></summary><div class="table-scroll part5-picker-scroll"><table><thead><tr><th>操作</th><th>排序</th><th>持股</th><th>Sector</th><th>出現筆數</th><th>平均占TNA</th><th>平均stock_beta</th><th>合計weighted_beta</th><th>beta_adjusted_score</th></tr></thead><tbody>${body}</tbody></table></div></details>`;
+  const body = ranked.map((row, index) => {
+    const isActive = activeHoldingKeys.has(row.searchKey);
+    return `<button type="button" class="part5-selection-card part5-click-row${isActive ? " active" : ""}" data-holding-key="${escapeHtml(row.searchKey)}" aria-pressed="${isActive}">
+      <span class="selection-card-kicker">#${formatInt(index + 1)} · ${escapeHtml(row.sector || "Unclassified")}</span>
+      <strong>${escapeHtml(row.label || row.searchKey)}</strong>
+      <span class="selection-card-metrics"><span>出現 <b>${formatInt(row.count)}</b></span><span>占 TNA <b>${escapeHtml(formatPct(row.avgHoldingPct))}</b></span><span>β score <b>${escapeHtml(formatValue(row.score, "num"))}</b></span></span>
+    </button>`;
+  }).join("");
+  dom.part5TopHoldingPickerTable.innerHTML = `<div class="part5-selection-card-grid" role="listbox" aria-multiselectable="true" aria-label="Top 持股快速選取">${body}</div>`;
   dom.part5TopHoldingPickerTable.onclick = event => {
     const target = event.target.closest("[data-holding-key]");
     if (!target) return;
     const key = cleanText(target.getAttribute("data-holding-key"));
     if (!key) return;
-    state.part5.brushedHoldingKeys = [];
-    state.part5.activeHoldingKey = key;
+    const selection = updatePart5KeySelection(
+      state.part5.brushedHoldingKeys,
+      state.part5.activeHoldingKey,
+      key,
+      part5IsAdditiveSelection(event)
+    );
+    state.part5.brushedHoldingKeys = selection.brushedKeys;
+    state.part5.activeHoldingKey = selection.activeKey;
     renderPart5TopHoldingDetail(allHoldingRows);
-    highlightPart5PickerRows(dom.part5TopHoldingPickerTable, "data-holding-key", key);
-    setPart5Status(`已用快速清單鎖定持股 ${key}。`);
+    highlightPart5PickerRows(dom.part5TopHoldingPickerTable, "data-holding-key", selection.selectedKeys);
+    drawPart5TopHoldingsChart(detailRows);
+    setPart5Status(selection.selectedKeys.length > 1
+      ? `快速選取已累加 ${formatInt(selection.selectedKeys.length)} 個 Top 持股。`
+      : (selection.selectedKeys.length ? `已選取 ${key}；按住 Ctrl / Cmd 可累加。` : "已取消 Top 持股選取。"));
   };
 }
 
-function highlightPart5PickerRows(container, attrName, activeKey) {
+function highlightPart5PickerRows(container, attrName, activeKeys) {
   if (!container) return;
-  container.querySelectorAll(".part5-click-row").forEach(row => row.classList.toggle("active", row.getAttribute(attrName) === activeKey));
+  const selected = new Set(Array.isArray(activeKeys) ? activeKeys : (activeKeys ? [activeKeys] : []));
+  container.querySelectorAll(".part5-click-row").forEach(row => {
+    const isActive = selected.has(row.getAttribute(attrName));
+    row.classList.toggle("active", isActive);
+    row.setAttribute("aria-pressed", String(isActive));
+  });
 }
 
 function syncPart5Selection(reports, allHoldings) {
@@ -6710,6 +7018,7 @@ function renderTable(containerOrId, rows, columns, options = {}) {
   const container = typeof containerOrId === "string" ? document.getElementById(containerOrId) : containerOrId;
   if (!container) return;
   container.innerHTML = "";
+  if (container.classList.contains("frontend-table-removed")) return;
   if (!rows || !rows.length) return;
 
   const table = document.createElement("table");
@@ -8435,3 +8744,279 @@ renderPart6BackendVisuals = function renderPart6BidirectionalFinal(result) {
   renderPart6AllStockActionTable(stockActionRows);
   renderPart6Reliability(result);
 };
+
+
+/* 2026-07-24 focused-stage workspace patch.
+   Removes the six-panel overview, integrates Part5B into Part5, and adds P6/P7 stages. */
+function initPart1To5WorkspaceTabs() {
+  document.querySelectorAll('input[name="part5Subview"]').forEach(input => {
+    input.addEventListener('change', () => updatePart5Subview(input.value));
+  });
+  updatePart5Subview(document.querySelector('input[name="part5Subview"]:checked')?.value || 'holdings');
+}
+
+function updatePart5Subview(value) {
+  const holdings = document.getElementById('part5Section');
+  const exposure = document.getElementById('part5BWorkspace');
+  const showExposure = value === 'exposure';
+  holdings?.classList.toggle('part5-subview-inactive', showExposure);
+  exposure?.classList.toggle('part5-subview-inactive', !showExposure);
+  window.requestAnimationFrame(() => {
+    const active = showExposure ? exposure : holdings;
+    if (!active || !window.Plotly?.Plots?.resize) return;
+    active.querySelectorAll('.js-plotly-plot:not(.hidden)').forEach(chart => window.Plotly.Plots.resize(chart));
+  });
+}
+
+function setWorkspaceStageAvailability(panelId, available) {
+  const workspace = document.querySelector('.part1-to5-workspace');
+  const panel = document.getElementById(panelId);
+  if (!workspace || !panel) return;
+  panel.classList.toggle('workspace-stage-locked', !available);
+  panel.setAttribute('aria-disabled', String(!available));
+  const navButton = workspace.querySelector(`[data-stage-focus="${panelId}"]`);
+  if (navButton) {
+    navButton.disabled = !available;
+    navButton.setAttribute('aria-disabled', String(!available));
+  }
+  if (!available && panel.classList.contains('workspace-stage-active')) {
+    const fallback = Array.from(workspace.querySelectorAll('[data-stage-focus]')).find(button => !button.disabled);
+    if (fallback) focusPart1To5WorkspaceStage(fallback.dataset.stageFocus);
+  }
+  syncWorkspaceExpertStrip();
+}
+
+function initPart1To5WorkspaceViewMode() {
+  const workspace = document.querySelector('.part1-to5-workspace');
+  if (!workspace) return;
+  for (const stage of WORKSPACE_STAGE_DEFS) {
+    const panel = document.getElementById(stage.id);
+    if (!panel) continue;
+    panel.classList.add('workspace-stage-card', 'research-stage-panel');
+    panel.dataset.stageLabel = stage.label;
+    setWorkspaceStageAvailability(stage.id, stage.available());
+  }
+  workspace.querySelectorAll('[data-stage-focus]').forEach(button => {
+    button.addEventListener('click', () => focusPart1To5WorkspaceStage(button.dataset.stageFocus));
+  });
+  workspace.querySelectorAll('[data-availability-target]').forEach(button => {
+    const target = document.getElementById(button.dataset.availabilityTarget);
+    if (!target) return;
+    const syncAvailability = () => setWorkspaceStageAvailability(button.dataset.stageFocus, !target.classList.contains('hidden'));
+    new MutationObserver(syncAvailability).observe(target, { attributes: true, attributeFilter: ['class'] });
+    syncAvailability();
+  });
+  initWorkspaceExpertStrip();
+  focusPart1To5WorkspaceStage('part1Section');
+}
+
+function showPart1To5WorkspaceOverview() {
+  focusPart1To5WorkspaceStage('part1Section');
+}
+
+function focusPart1To5WorkspaceStage(panelId) {
+  const workspace = document.querySelector('.part1-to5-workspace');
+  const panel = document.getElementById(panelId);
+  if (!workspace || !panel || panel.classList.contains('workspace-stage-locked')) return;
+  workspace.dataset.activeStage = panelId;
+  workspace.querySelectorAll('.workspace-stage-card').forEach(candidate => {
+    const active = candidate === panel;
+    candidate.classList.toggle('workspace-stage-active', active);
+    candidate.classList.toggle('workspace-stage-inactive', !active);
+  });
+  workspace.querySelectorAll('[data-stage-focus]').forEach(button => {
+    const active = button.dataset.stageFocus === panelId;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  panel.scrollTop = 0;
+  if (panelId === 'part3Section') {
+    const managerChart = document.getElementById('managerChart');
+    if (managerChart) {
+      managerChart.style.setProperty('height', 'calc(100% - 46px)');
+      managerChart.style.setProperty('min-height', '560px');
+    }
+  }
+  if (panelId === 'part6Section' && state.part6?.backendResult) {
+    const predictions = part6EnrichedPredictions(state.part6.backendResult);
+    drawPart6ActionD3Summary(part6AllStockActionRows(predictions));
+  }
+  resizePart1To5WorkspacePlots(panel);
+}
+
+function initPart1To5WorkspaceResize() {
+  const workspace = document.querySelector('.part1-to5-workspace');
+  if (!workspace || typeof ResizeObserver === 'undefined') return;
+  let frame = 0;
+  const observer = new ResizeObserver(() => {
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => {
+      const active = workspace.querySelector('.workspace-stage-active');
+      if (active) resizePart1To5WorkspacePlots(active);
+    });
+  });
+  observer.observe(workspace);
+  window.__part1To5WorkspaceResizeObserver = observer;
+}
+
+function part5ColorWithAlpha(color, alpha = 0.18) {
+  const value = String(color || '').trim();
+  const hex = value.match(/^#([0-9a-f]{6})$/i);
+  if (hex) {
+    const number = parseInt(hex[1], 16);
+    return `rgba(${(number >> 16) & 255}, ${(number >> 8) & 255}, ${number & 255}, ${alpha})`;
+  }
+  const rgb = value.match(/^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
+  if (rgb) return `rgba(${rgb[1]}, ${rgb[2]}, ${rgb[3]}, ${alpha})`;
+  return value;
+}
+
+function part5TopHoldingSelectionColors(ranked, selectedKeys) {
+  const selected = selectedKeys instanceof Set ? selectedKeys : new Set(selectedKeys || []);
+  const hasSelection = selected.size > 0;
+  return (ranked || []).map(row => {
+    if (!hasSelection || selected.has(row.searchKey)) return row.color;
+    return part5ColorWithAlpha(row.color, 0.18);
+  });
+}
+
+function drawPart6ActionD3Summary(rows) {
+  const host = document.getElementById('part6ActionD3Summary');
+  if (!host) return;
+  if (!window.d3) {
+    host.innerHTML = '<div class="part6-action-d3-empty">D3 尚未載入；下方仍保留原本的真實持股動作圖。</div>';
+    return;
+  }
+  const d3 = window.d3;
+  const cleanRows = (rows || []).filter(row => row && row.stock_action_direction && row.manager);
+  host.innerHTML = '';
+  if (!cleanRows.length) {
+    host.innerHTML = '<div class="part6-action-d3-empty">尚無可對齊的真實持股動作。請先在 Part5 選取基金報告，再執行 Part6。</div>';
+    return;
+  }
+
+  const actionKeys = ['new_position', 'increase', 'decrease'];
+  const actionLabels = { new_position: '新增', increase: '加碼', decrease: '減碼' };
+  const actionColors = { new_position: '#2187d5', increase: '#1f9d8a', decrease: '#c94c4c' };
+  const grouped = d3.rollups(cleanRows, values => {
+    const counts = Object.fromEntries(actionKeys.map(key => [key, values.filter(row => row.stock_action_direction === key).length]));
+    const deltas = values.map(row => Number(row.delta_holding_pct)).filter(Number.isFinite);
+    const sectors = d3.rollups(values.filter(row => row.sector), v => v.length, row => row.sector).sort((a,b) => b[1]-a[1]);
+    const dates = values.map(row => row.report_dt).filter(Boolean).sort();
+    return {
+      manager: values[0].manager,
+      counts,
+      total: values.length,
+      netDelta: d3.sum(deltas),
+      grossDelta: d3.sum(deltas, value => Math.abs(value)),
+      topSectors: sectors.slice(0,3),
+      firstDate: dates[0] || '—',
+      lastDate: dates[dates.length-1] || '—'
+    };
+  }, row => row.manager).map(([, value]) => value)
+    .sort((a,b) => b.total - a.total || d3.descending(Math.abs(a.netDelta), Math.abs(b.netDelta)));
+
+  const maxManagers = 18;
+  const data = grouped.slice(0, maxManagers);
+  const omitted = grouped.length - data.length;
+  const width = Math.max(900, host.clientWidth || 900);
+  const rowHeight = 34;
+  const margin = { top: 42, right: 38, bottom: 42, left: 220 };
+  const height = margin.top + margin.bottom + data.length * rowHeight;
+  const countAreaEnd = width * 0.64;
+  const deltaAreaStart = width * 0.73;
+  const countWidth = countAreaEnd - margin.left;
+  const deltaWidth = width - margin.right - deltaAreaStart;
+  const maxCount = d3.max(data, d => d.total) || 1;
+  const maxAbsDelta = d3.max(data, d => Math.abs(d.netDelta)) || 0.01;
+  const xCount = d3.scaleLinear().domain([0,maxCount]).nice().range([margin.left,countAreaEnd]);
+  const xDelta = d3.scaleLinear().domain([-maxAbsDelta,maxAbsDelta]).nice().range([deltaAreaStart,width-margin.right]);
+  const y = d3.scaleBand().domain(data.map(d => d.manager)).range([margin.top,height-margin.bottom]).paddingInner(0.23);
+
+  const tooltip = d3.select(host).append('div').attr('class','part6-action-d3-tooltip').style('opacity',0);
+  const svg = d3.select(host).append('svg')
+    .attr('viewBox', `0 0 ${width} ${height}`)
+    .attr('role','img')
+    .attr('aria-label','Manager action fingerprint showing action counts and net holding weight changes');
+
+  svg.append('text').attr('x',margin.left).attr('y',20).attr('class','d3-axis-title').text('真實動作筆數（堆疊）');
+  svg.append('text').attr('x',deltaAreaStart).attr('y',20).attr('class','d3-axis-title').text('淨持股權重變化');
+  svg.append('g').attr('transform',`translate(0,${height-margin.bottom})`).call(d3.axisBottom(xCount).ticks(6).tickSizeOuter(0));
+  svg.append('g').attr('transform',`translate(0,${height-margin.bottom})`).call(d3.axisBottom(xDelta).ticks(5).tickFormat(d3.format('.1%')).tickSizeOuter(0));
+  svg.append('line').attr('x1',xDelta(0)).attr('x2',xDelta(0)).attr('y1',margin.top-8).attr('y2',height-margin.bottom).attr('class','d3-zero-line');
+
+  const row = svg.selectAll('g.manager-action-row').data(data).join('g')
+    .attr('class','manager-action-row')
+    .attr('transform',d => `translate(0,${y(d.manager)})`)
+    .style('cursor','pointer')
+    .on('mouseenter', function(event,d) {
+      d3.select(this).classed('hovered',true);
+      tooltip.style('opacity',1).html(
+        `<strong>${escapeHtml(d.manager)}</strong><br>`+
+        `期間：${escapeHtml(d.firstDate)} ～ ${escapeHtml(d.lastDate)}<br>`+
+        `新增 ${d.counts.new_position}｜加碼 ${d.counts.increase}｜減碼 ${d.counts.decrease}<br>`+
+        `淨權重變化：${d3.format('+.2%')(d.netDelta)}｜總變動量：${d3.format('.2%')(d.grossDelta)}<br>`+
+        `主要產業：${d.topSectors.map(([name,count]) => `${escapeHtml(name)}(${count})`).join('、') || '—'}`
+      );
+    })
+    .on('mousemove', event => tooltip.style('left',`${event.offsetX+16}px`).style('top',`${event.offsetY+16}px`))
+    .on('mouseleave', function() { d3.select(this).classed('hovered',false); tooltip.style('opacity',0); })
+    .on('click', function(event,d) {
+      const selected = !d3.select(this).classed('selected');
+      row.classed('selected',false).classed('dimmed',selected);
+      d3.select(this).classed('selected',selected).classed('dimmed',false);
+      if (!selected) row.classed('dimmed',false);
+    });
+
+  row.append('text').attr('x',margin.left-10).attr('y',y.bandwidth()/2+4).attr('text-anchor','end').attr('class','d3-manager-label')
+    .text(d => d.manager.length > 28 ? `${d.manager.slice(0,27)}…` : d.manager);
+
+  row.each(function(d) {
+    let cumulative = 0;
+    const g = d3.select(this);
+    for (const key of actionKeys) {
+      const value = d.counts[key];
+      if (!value) continue;
+      g.append('rect')
+        .attr('x',xCount(cumulative))
+        .attr('y',0)
+        .attr('width',Math.max(1,xCount(cumulative+value)-xCount(cumulative)))
+        .attr('height',y.bandwidth())
+        .attr('rx',3)
+        .attr('fill',actionColors[key]);
+      if (xCount(cumulative+value)-xCount(cumulative) > 24) {
+        g.append('text').attr('x',(xCount(cumulative)+xCount(cumulative+value))/2).attr('y',y.bandwidth()/2+4)
+          .attr('text-anchor','middle').attr('class','d3-segment-label').text(value);
+      }
+      cumulative += value;
+    }
+  });
+
+  row.append('line')
+    .attr('x1',xDelta(0)).attr('x2',d => xDelta(d.netDelta))
+    .attr('y1',y.bandwidth()/2).attr('y2',y.bandwidth()/2)
+    .attr('class',d => d.netDelta >= 0 ? 'd3-net-line positive' : 'd3-net-line negative');
+  row.append('path')
+    .attr('d',d3.symbol().type(d3.symbolDiamond).size(72))
+    .attr('transform',d => `translate(${xDelta(d.netDelta)},${y.bandwidth()/2})`)
+    .attr('class',d => d.netDelta >= 0 ? 'd3-net-diamond positive' : 'd3-net-diamond negative');
+  row.append('text')
+    .attr('x',d => xDelta(d.netDelta) + (d.netDelta >= 0 ? 9 : -9))
+    .attr('y',y.bandwidth()/2+4)
+    .attr('text-anchor',d => d.netDelta >= 0 ? 'start' : 'end')
+    .attr('class','d3-net-label')
+    .text(d => d3.format('+.1%')(d.netDelta));
+
+  if (omitted > 0) {
+    d3.select(host).append('div').attr('class','part6-action-d3-footnote').text(`目前顯示動作筆數最高的 ${maxManagers} 位經理人；另有 ${omitted} 位可在下方完整持股動作圖查看。`);
+  }
+}
+
+// Add the D3 fingerprint whenever the authoritative Part6 action chart is redrawn.
+if (typeof drawPart6AllStockActionChart === 'function') {
+  const __drawPart6AllStockActionChart = drawPart6AllStockActionChart;
+  drawPart6AllStockActionChart = function(rows) {
+    __drawPart6AllStockActionChart(rows);
+    drawPart6ActionD3Summary(rows);
+  };
+}

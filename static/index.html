@@ -1,510 +1,469 @@
 <!DOCTYPE html>
+
 <html lang="zh-Hant">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Tab6 S&P500 Fund Analysis</title>
-  <link rel="stylesheet" href="style.css?v=20260722-part6-bidirectional" />
-  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<title>Balanced Fund Evidence Audit</title>
+<link href="style.css?v=20260724-stage-workspace" rel="stylesheet"/>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script><script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 </head>
 <body>
-  <header class="app-header">
-    <div>
-      <h1>Tab6 S&P500 Fund Analysis</h1>
-      <p>瀏覽器版，直接使用 balanced_before2010.csv、balanced_after2010.csv 與 S&P500 CSV。</p>
-    </div>
-    <div id="loadStatus" class="status">等待載入資料</div>
-  </header>
-
-  <main>
-    <section class="panel">
-      <div class="section-head">
-        <h2>資料與篩選</h2>
-        <div class="actions">
-          <button id="loadDefaultBtn" type="button">載入內建 CSV</button>
-          <button id="resetBtn" type="button" class="secondary">全部重設</button>
-        </div>
-      </div>
-
-      <div class="control-grid">
-        <label class="control">
+<header class="app-header">
+<div>
+<h1>Tab6 S&amp;P500 Fund Analysis</h1>
+<p>瀏覽器版，直接使用 balanced_before2010.csv、balanced_after2010.csv 與 S&amp;P500 CSV。</p>
+</div>
+<div class="status" id="loadStatus">等待載入資料</div>
+</header>
+<main>
+<section aria-hidden="true" class="panel data-control-panel frontend-copy-removed">
+<div class="section-head">
+<h2>資料與篩選</h2>
+<div class="actions">
+<button id="loadDefaultBtn" type="button">載入內建 CSV</button>
+<button class="secondary" id="resetBtn" type="button">全部重設</button>
+</div>
+</div>
+<div class="control-grid">
+<label class="control">
           基金 CSV，可一次選多個
-          <input type="file" id="fundCsvInput" accept=".csv" multiple />
-        </label>
-        <label class="control">
-          S&P500 CSV
-          <input type="file" id="sp500CsvInput" accept=".csv" />
-        </label>
-        <label class="control compact">
-          缺值時 S&P500 年報酬
-          <input type="number" id="manualSp500Input" value="0.10" min="-1" max="2" step="0.01" />
-        </label>
-        <button id="loadUploadedBtn" type="button">載入上傳 CSV</button>
-      </div>
-
-      <div class="control-grid filters">
-        <label class="control wide">
+          <input accept=".csv" id="fundCsvInput" multiple="" type="file"/>
+</label>
+<label class="control">
+          S&amp;P500 CSV
+          <input accept=".csv" id="sp500CsvInput" type="file"/>
+</label>
+<label class="control compact">
+          缺值時 S&amp;P500 年報酬
+          <input id="manualSp500Input" max="2" min="-1" step="0.01" type="number" value="0.10"/>
+</label>
+<button id="loadUploadedBtn" type="button">載入上傳 CSV</button>
+</div>
+<div class="control-grid filters">
+<label class="control wide">
           基金公司篩選
-          <select id="mgmtFilter" multiple size="6"></select>
-        </label>
-        <div class="filter-actions">
-          <button id="applyMgmtBtn" type="button">套用公司篩選</button>
-          <button id="clearMgmtBtn" type="button" class="secondary">清除公司篩選</button>
-        </div>
-      </div>
-
-      <div id="progressBar" class="progress" aria-hidden="true">
-        <div id="progressFill"></div>
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="section-head">
-        <h2>Part 1：基金報酬 vs S&P500</h2>
-        <div class="segmented" role="group" aria-label="期間">
-          <label><input type="radio" name="horizon" value="y3" checked /> Trailing 3年</label>
-        </div>
-      </div>
-
-      <div class="toolbar">
-        <div class="segmented" role="group" aria-label="選取模式">
-          <label><input type="radio" name="selectionMode" value="single" checked /> 單一區域</label>
-          <label><input type="radio" name="selectionMode" value="compare" /> A/B 比較</label>
-        </div>
-        <button id="setABtn" type="button">設為 A</button>
-        <button id="setBBtn" type="button">設為 B</button>
-        <button id="applyPart1Btn" type="button">套用 Part1</button>
-        <button id="clearPart1Btn" type="button" class="secondary">清除 Part1</button>
-        <span id="part1SelectionStatus" class="inline-status">尚未框選</span>
-      </div>
-
-      <div class="metrics">
-        <div><span>總筆數</span><strong id="metricTotal">-</strong></div>
-        <div><span>A 筆數</span><strong id="metricA">-</strong></div>
-        <div><span>B 筆數</span><strong id="metricB">-</strong></div>
-        <div><span>A 贏 S&P500</span><strong id="metricBeatA">-</strong></div>
-      </div>
-
-      <div id="scatterPlot" class="chart large-chart"></div>
-    </section>
-
-    <section class="panel hidden" id="part2Section">
-      <div class="section-head">
-        <h2>Part 2：基金層級 ML 相關因子篩選</h2>
-        <label class="toggle"><input type="checkbox" id="cumulativeHistInput" /> 累積直方圖</label>
-      </div>
-
-      <div class="toolbar">
-        <label class="control compact">
+          <select id="mgmtFilter" multiple="" size="6"></select>
+</label>
+<div class="filter-actions">
+<button id="applyMgmtBtn" type="button">套用公司篩選</button>
+<button class="secondary" id="clearMgmtBtn" type="button">清除公司篩選</button>
+</div>
+</div>
+<div aria-hidden="true" class="progress" id="progressBar">
+<div id="progressFill"></div>
+</div>
+</section>
+<section aria-labelledby="researchWorkspaceTitle" class="part1-to5-workspace research-stage-workspace"><div class="workspace-overview research-stage-header"><div class="workspace-title-block"><span class="workspace-kicker">HUMAN-GUIDED CASE CONSTRUCTION</span><h2 id="researchWorkspaceTitle">Part1～Part7 基金研究與證據稽核</h2><div aria-label="跨階段研究摘要" class="workspace-expert-strip">
+<span><small>Universe</small><b id="workspaceUniverseValue">—</b></span>
+<span><small>Part1 case</small><b id="workspacePart1Value">—</b></span>
+<span><small>Part2 cohort</small><b id="workspacePart2Value">—</b></span>
+<span><small>Managers</small><b id="workspaceManagerValue">—</b></span>
+<span><small>Part5 reports</small><b id="workspacePart5Value">—</b></span>
+</div></div><div class="workspace-overview-actions"><nav aria-label="Part1 到 Part7 詳細操作" class="workspace-stage-nav"><button aria-pressed="true" class="active" data-stage-focus="part1Section" type="button">P1 市場</button><button aria-disabled="true" aria-pressed="false" data-availability-target="part2Section" data-stage-focus="part2Section" disabled="" type="button">P2 Cohort</button><button aria-disabled="true" aria-pressed="false" data-availability-target="part3Section" data-stage-focus="part3Section" disabled="" type="button">P3 經理人</button><button aria-disabled="true" aria-pressed="false" data-availability-target="part4Section" data-stage-focus="part4Section" disabled="" type="button">P4 Style</button><button aria-pressed="false" data-stage-focus="part5Stage" type="button">P5 揭露</button><button aria-pressed="false" data-stage-focus="part6Section" type="button">P6 模型事件</button><button aria-pressed="false" data-stage-focus="part7Section" type="button">P7 Critic</button></nav></div></div><div class="research-stage-container" id="researchStageContainer"><section class="panel workspace-part-panel workspace-stage-card research-stage-panel" id="part1Section">
+<div class="section-head">
+<h2>Part 1：基金報酬 vs S&amp;P500</h2>
+<div aria-label="期間" class="segmented" role="group">
+<label><input checked="" name="horizon" type="radio" value="y3"/> Trailing 3年</label>
+</div>
+</div>
+<div class="toolbar">
+<div aria-label="選取模式" class="segmented" role="group">
+<label><input checked="" name="selectionMode" type="radio" value="single"/> 單一區域</label>
+<label><input name="selectionMode" type="radio" value="compare"/> A/B 比較</label>
+</div>
+<button id="setABtn" type="button">設為 A</button>
+<button id="setBBtn" type="button">設為 B</button>
+<button id="applyPart1Btn" type="button">套用 Part1</button>
+<button class="secondary" id="clearPart1Btn" type="button">清除 Part1</button>
+<span class="inline-status" id="part1SelectionStatus">尚未框選</span>
+</div>
+<div class="metrics">
+<div><span>總筆數</span><strong id="metricTotal">-</strong></div>
+<div><span>A 筆數</span><strong id="metricA">-</strong></div>
+<div><span>B 筆數</span><strong id="metricB">-</strong></div>
+<div><span>A 贏 S&amp;P500</span><strong id="metricBeatA">-</strong></div>
+</div>
+<div class="chart large-chart" id="scatterPlot"></div>
+</section><section class="panel hidden workspace-stage-card research-stage-panel workspace-stage-inactive" id="part2Section">
+<div class="section-head">
+<h2>Part 2：基金層級 ML 相關因子篩選</h2>
+<label class="toggle"><input id="cumulativeHistInput" type="checkbox"/> 累積直方圖</label>
+</div>
+<div class="toolbar">
+<label class="control compact">
           Part2 條件邏輯
           <select id="part2LogicSelect">
-            <option value="or">任一條件符合 OR</option>
-            <option value="and" selected>全部條件符合 AND</option>
-          </select>
-        </label>
-
-        <button id="addPart2RegionBtn" type="button">加入目前範圍</button>
-        <button id="applyPart2Btn" type="button">套用 Part2</button>
-        <button id="clearPart2Btn" type="button" class="secondary">清除 Part2</button>
-        <span id="part2Status" class="inline-status">尚未選取 histogram 範圍</span>
-      </div>
-     
-      <div class="metrics">
-         <div><span>A Part2 筆數</span><strong id="metricP2A">-</strong></div>
-         <div><span>A 基金數</span><strong id="metricP2FundsA">-</strong></div>
-         <div><span>B Part2 筆數</span><strong id="metricP2B">-</strong></div>
-         <div><span>B 基金數</span><strong id="metricP2FundsB">-</strong></div>
-      </div>
-
-      <div id="part2Grid"></div>
-    </section>
-
-    <section class="panel hidden" id="part3Section">
-      <div class="section-head">
-        <h2>Part 3：經理人選取</h2>
-        <div class="actions">
-          <button id="addManagersBtn" type="button">加入目前經理人</button>
-          <button id="applyManagersBtn" type="button">加入 Part4</button>
-          <button id="clearManagersBtn" type="button" class="secondary">清除 Part3</button>
-        </div>
-      </div>
-      <p id="part3Status" class="inline-status">尚未選取經理人</p>
-      <div id="managerChart" class="chart large-chart"></div>
-      <div id="managerTable" class="table-wrap"></div>
-    </section>
-
-    <section class="panel hidden" id="part4Section">
-      <div class="section-head">
-        <h2>Part 4：經理人 Indicator、Radar、相似群組與 Style Drift</h2>
-        <div class="actions">
-          <div class="segmented" role="group" aria-label="Part4 圖表">
-            <label><input type="radio" name="part4View" value="indicator" checked /> Indicator</label>
-            <label><input type="radio" name="part4View" value="radar" /> Radar</label>
-            <label><input type="radio" name="part4View" value="style_drift" /> Style Drift</label>
-          </div>
-          <button id="clearRadarBtn" type="button" class="secondary">清除 Part4</button>
-        </div>
-      </div>
-      <div id="indicatorChart" class="chart indicator-chart"></div>
-      <div id="radarChart" class="chart large-chart hidden"></div>
-      <div id="styleDriftChart" class="chart large-chart hidden"></div>
-      <div id="groupTable" class="table-wrap"></div>
-      <div id="recordTable" class="table-wrap"></div>
-    </section>
-
-    <section class="panel part5-panel" id="part5Section">
-      <div class="section-head">
-        <h2>Part 5：10 年期殖利率、股債配置、個股 Beta 與持股明細</h2>
-        <div class="actions">
-          <button id="loadPart5Btn" type="button">載入 Part5 資料</button>
-          <button id="resetPart5Btn" type="button" class="secondary">重設 Part5</button>
-        </div>
-      </div>
-
-      <div id="part5Status" class="inline-status">尚未載入 Part5 資料。</div>
-
-      <div class="control-grid part5-controls">
-        <label class="control compact">
+<option value="or">任一條件符合 OR</option>
+<option selected="" value="and">全部條件符合 AND</option>
+</select>
+</label>
+<button id="addPart2RegionBtn" type="button">加入目前範圍</button>
+<button id="applyPart2Btn" type="button">套用 Part2</button>
+<button class="secondary" id="clearPart2Btn" type="button">清除 Part2</button>
+<span class="inline-status" id="part2Status">尚未選取 histogram 範圍</span>
+</div>
+<div class="metrics">
+<div><span>A Part2 筆數</span><strong id="metricP2A">-</strong></div>
+<div><span>A 基金數</span><strong id="metricP2FundsA">-</strong></div>
+<div><span>B Part2 筆數</span><strong id="metricP2B">-</strong></div>
+<div><span>B 基金數</span><strong id="metricP2FundsB">-</strong></div>
+</div>
+<div id="part2Grid"></div>
+</section><section class="panel hidden workspace-stage-card research-stage-panel workspace-stage-inactive" id="part3Section">
+<div class="section-head">
+<h2>Part 3：經理人選取</h2>
+<div class="actions">
+<button id="addManagersBtn" type="button">加入目前經理人</button>
+<button id="applyManagersBtn" type="button">加入 Part4</button>
+<button class="secondary" id="clearManagersBtn" type="button">清除 Part3</button>
+</div>
+</div>
+<p aria-hidden="true" class="inline-status frontend-copy-removed" id="part3Status">尚未選取經理人</p>
+<div class="chart large-chart" id="managerChart"></div>
+<div aria-hidden="true" class="table-wrap frontend-table-removed" id="managerTable"></div>
+</section><section class="panel hidden workspace-stage-card research-stage-panel workspace-stage-inactive" id="part4Section">
+<div class="section-head">
+<h2>Part 4：經理人 Indicator、Radar、相似群組與 Style Drift</h2>
+<div class="actions">
+<div aria-label="Part4 圖表" class="segmented" role="group">
+<label><input checked="" name="part4View" type="radio" value="indicator"/> Indicator</label>
+<label><input name="part4View" type="radio" value="radar"/> Radar</label>
+<label><input name="part4View" type="radio" value="style_drift"/> Style Drift</label>
+</div>
+<button class="secondary" id="clearRadarBtn" type="button">清除 Part4</button>
+</div>
+</div>
+<div class="chart indicator-chart" id="indicatorChart"></div>
+<div class="chart large-chart hidden" id="radarChart"></div>
+<div class="chart large-chart hidden" id="styleDriftChart"></div>
+<div aria-hidden="true" class="table-wrap frontend-table-removed" id="groupTable"></div>
+<div aria-hidden="true" class="table-wrap frontend-table-removed" id="recordTable"></div>
+</section><div class="workspace-stage-card research-stage-panel workspace-stage-inactive" id="part5Stage"><div class="part5-stage-switcher"><div><h2>Part 5：Disclosed Action Reconstruction</h2><p>在同一階段切換個股揭露與非個股曝險，不改變既有 Part5 選樣狀態。</p></div><div aria-label="Part5 顯示內容" class="segmented part5-subview-segmented" role="group"><label><input checked="" name="part5Subview" type="radio" value="holdings"/>揭露持股</label><label><input name="part5Subview" type="radio" value="exposure"/>非個股曝險</label></div></div><section class="panel part5-panel part5-subview-panel" id="part5Section">
+<div class="section-head">
+<h2>Part 5：10 年期殖利率、股債配置、個股 Beta 與持股明細</h2>
+<div class="actions">
+<button id="loadPart5Btn" type="button">載入 Part5 資料</button>
+<button class="secondary" id="resetPart5Btn" type="button">重設 Part5</button>
+</div>
+</div>
+<div class="inline-status frontend-copy-removed" id="part5Status">尚未載入 Part5 資料。</div>
+<div class="control-grid part5-controls">
+<label class="control compact part5-analysis-mode-only">
           Part5 分析模式
           <select id="part5AnalysisModeSelect">
-            <option value="all">全部基金 / 持股分析</option>
-            <option value="manager">Part4 經理人分析</option>
-          </select>
-        </label>
-        <label class="control compact">
+<option value="all">全部基金 / 持股分析</option>
+<option value="manager">Part4 經理人分析</option>
+</select>
+</label>
+<label class="control compact part5-control-hidden">
           期間
           <select id="part5PeriodSelect">
-            <option value="all">全部期間</option>
-            <option value="before2010">2010 年以前</option>
-            <option value="y2010_2014">2010-2014</option>
-            <option value="y2015_2019">2015-2019</option>
-            <option value="y2020_2026">2020-2026</option>
-          </select>
-        </label>
-        <label class="control compact">
+<option value="all">全部期間</option>
+<option value="before2010">2010 年以前</option>
+<option value="y2010_2014">2010-2014</option>
+<option value="y2015_2019">2015-2019</option>
+<option value="y2020_2026">2020-2026</option>
+</select>
+</label>
+<label class="control compact part5-control-hidden">
           趨勢彙總
           <select id="part5AggregationSelect">
-            <option value="year">年</option>
-            <option value="quarter">季</option>
-          </select>
-        </label>
-        <label class="control compact">
+<option value="year">年</option>
+<option value="quarter">季</option>
+</select>
+</label>
+<label class="control compact part5-control-hidden">
           細看年/季
           <select id="part5FocusSelect">
-            <option value="all">全部年份</option>
-          </select>
-        </label>
-        <label class="control compact">
+<option value="all">全部年份</option>
+</select>
+</label>
+<label class="control compact part5-control-hidden">
           持股排名上限
-          <input type="number" id="part5RankInput" value="10" min="1" max="20" step="1" />
-        </label>
-        <label class="control compact">
+          <input id="part5RankInput" max="20" min="1" step="1" type="number" value="10"/>
+</label>
+<label class="control compact part5-control-hidden">
           明細列數
           <select id="part5LimitSelect">
-            <option value="100">100</option>
-            <option value="250" selected>250</option>
-            <option value="500">500</option>
-            <option value="1000">1000</option>
-          </select>
-        </label>
-        <label class="control wide">
+<option value="100">100</option>
+<option selected="" value="250">250</option>
+<option value="500">500</option>
+<option value="1000">1000</option>
+</select>
+</label>
+<label class="control wide part5-control-hidden">
           持股 / 基金搜尋
-          <input type="text" id="part5SearchInput" placeholder="輸入 ticker、公司、基金名稱或 portno" />
-        </label>
-        <button id="applyPart5FiltersBtn" type="button">套用 Part5 篩選</button>
-        <button id="clearPart5FiltersBtn" type="button" class="secondary">清除 Part5 篩選</button>
-      </div>
-
-      <div id="part5Results" class="part5-results hidden">
-        <div class="metrics part5-metrics">
-          <div><span>基金報告數</span><strong id="metricP5Reports">-</strong></div>
-          <div><span>基金數</span><strong id="metricP5Funds">-</strong></div>
-          <div><span>持股明細</span><strong id="metricP5Holdings">-</strong></div>
-          <div><span>平均10年殖利率</span><strong id="metricP5Yield">-</strong></div>
-        </div>
-
-        <div class="part5-interaction-note" id="part5InteractionHint">
+          <input id="part5SearchInput" placeholder="輸入 ticker、公司、基金名稱或 portno" type="text"/>
+</label>
+<button class="part5-control-hidden" id="applyPart5FiltersBtn" type="button">套用 Part5 篩選</button>
+<button class="secondary part5-control-hidden" id="clearPart5FiltersBtn" type="button">清除 Part5 篩選</button>
+</div>
+<div class="part5-results hidden" id="part5Results">
+<div class="metrics part5-metrics">
+<div><span>基金報告數</span><strong id="metricP5Reports">-</strong></div>
+<div><span>基金數</span><strong id="metricP5Funds">-</strong></div>
+<div><span>持股明細</span><strong id="metricP5Holdings">-</strong></div>
+<div><span>平均10年殖利率</span><strong id="metricP5Yield">-</strong></div>
+</div>
+<div aria-hidden="true" class="part5-interaction-note frontend-copy-removed" id="part5InteractionHint">
           互動方式：可切換「全部基金 / 持股分析」與「Part4 經理人分析」。經理人模式已使用快取與工作集加速；點選或框選經理人散點圖會同步過濾下方所有 Part5 圖表、快速選取、摘要與明細。Top 持股與基金報告配置散點圖已接上個股 beta / sector；10 年期殖利率與股債配置趨勢圖可框選年/季並同步影響下方內容。
         </div>
-
-        <div class="part5-brush-bar">
-          <span id="part5BrushStatus" class="inline-status">尚未框選</span>
-          <button id="clearPart5BrushBtn" type="button" class="secondary">清除 Part5 框選</button>
-        </div>
-
-        <div class="part5-manager-panel hidden" id="part5ManagerPanel">
-          <div class="part5-detail-head">
-            <h3>Part5：Part4 選出經理人的持股與配置分析</h3>
-            <span id="part5ManagerStatus" class="inline-status">尚未切換到經理人模式</span>
-          </div>
-          <div id="part5ManagerSummaryCards" class="part5-insight-cards"></div>
-          <div id="part5ManagerChart" class="chart part5-chart"></div>
-          <div id="part5ManagerTable" class="table-wrap"></div>
-        </div>
-
-        <div class="part5-chart-grid">
-          <div id="part5OverviewChart" class="chart part5-chart"></div>
-          <div id="part5AllocationChart" class="chart part5-chart"></div>
-          <div id="part5TopHoldingsChart" class="chart part5-chart part5-top-chart"></div>
-          <div id="part5ReportScatterChart" class="chart part5-chart part5-wide-chart"></div>
-        </div>
-
-        <div class="part5-picker-grid">
-          <div class="part5-detail-panel part5-picker-panel">
-            <div class="part5-detail-head">
-              <h3>基金報告快速選取</h3>
-              <span id="part5ReportPickerStatus" class="inline-status">載入後可直接點選表格列</span>
-            </div>
-            <div id="part5ReportPickerTable" class="table-wrap"></div>
-          </div>
-          <div class="part5-detail-panel part5-picker-panel">
-            <div class="part5-detail-head">
-              <h3>Top 持股快速選取</h3>
-              <span id="part5TopHoldingPickerStatus" class="inline-status">載入後可直接點選持股</span>
-            </div>
-            <div id="part5TopHoldingPickerTable" class="table-wrap"></div>
-          </div>
-        </div>
-
-        <div class="part5-va-grid">
-          <div class="part5-detail-panel">
-            <div class="part5-detail-head">
-              <h3>基金報告配置 Drill-down</h3>
-              <span id="part5ReportDetailStatus" class="inline-status">尚未點選基金報告</span>
-            </div>
-            <div id="part5ReportDetailTable" class="table-wrap"></div>
-            <div id="part5ReportHoldingsChart" class="chart part5-chart"></div>
-            <div id="part5HoldingExplainTable" class="table-wrap"></div>
-          </div>
-          <div class="part5-detail-panel">
-            <div class="part5-detail-head">
-              <h3>Top 持股互動明細</h3>
-              <span id="part5TopHoldingStatus" class="inline-status">尚未鎖定持股</span>
-            </div>
-            <div id="part5TopHoldingDetailTable" class="table-wrap"></div>
-          </div>
-        </div>
-
-        <div id="part5SummaryTable" class="table-wrap"></div>
-        <div id="part5HoldingsTable" class="table-wrap"></div>
-
-        <div class="part5-detail-panel part5b-panel">
-          <div class="part5-detail-head">
-            <h3>Part5B：Non-individual Holdings Exposure</h3>
-            <span id="part5BStatus" class="inline-status">Demo A/B/C：由 Part5 分析模式與上方 Part5 圖表框選自動連動</span>
-          </div>
-          <div id="part5BCaseCards" class="part5-insight-cards"></div>
-          <div class="part5b-chart-grid">
-            <div id="part5BOverviewChart" class="chart part5-chart"></div>
-            <div id="part5BYearChart" class="chart part5-chart"></div>
-            <div id="part5BRateCaseChart" class="chart part5-chart"></div>
-            <div id="part5BEquityCaseChart" class="chart part5-chart"></div>
-          </div>
-          <div id="part5BTopItemsTable" class="table-wrap"></div>
-          <div id="part5BRemovedAuditTable" class="table-wrap"></div>
-        </div>
-      </div>
-    </section>
-
-    <section class="panel part6-panel hidden" id="part6Section">
-      <div class="section-head">
-        <h2>Part 6：多天期決策診斷與可解釋性分析</h2>
-        <div class="actions">
-          <button id="runBackendAnalysisBtn" type="button">Run Backend Analysis</button>
-        </div>
-      </div>
-
-      <div id="part6Status" class="inline-status">請先載入 Part1 基金月資料。系統使用事件前 3 年風格基準，並同時輸出未來 3、6、9、12 個月結果。</div>
-      <div id="backendAnalysisStatus" class="inline-status backend-status">尚未送出 Part1–Part5 state。</div>
-
-      <div class="control-grid part6-controls">
-        <label class="control compact">
+<div class="part5-brush-bar">
+<span aria-hidden="true" class="inline-status frontend-copy-removed" id="part5BrushStatus">尚未框選</span>
+<button class="secondary" id="clearPart5BrushBtn" type="button">清除 Part5 框選</button>
+</div>
+<div class="part5-manager-panel hidden" id="part5ManagerPanel">
+<div class="part5-detail-head frontend-copy-removed">
+<h3>Part5：Part4 選出經理人的持股與配置分析</h3>
+<span class="inline-status" id="part5ManagerStatus">尚未切換到經理人模式</span>
+</div>
+<div class="part5-insight-cards frontend-copy-removed" id="part5ManagerSummaryCards"></div>
+<div class="chart part5-chart" id="part5ManagerChart"></div>
+<div aria-hidden="true" class="table-wrap frontend-table-removed" id="part5ManagerTable"></div>
+</div>
+<div class="part5-chart-grid">
+<div class="chart part5-chart" id="part5OverviewChart"></div>
+<div class="chart part5-chart" id="part5AllocationChart"></div>
+<div class="chart part5-chart part5-top-chart" id="part5TopHoldingsChart"></div>
+<div class="chart part5-chart part5-wide-chart" id="part5ReportScatterChart"></div>
+</div>
+<div class="part5-picker-grid">
+<details class="part5-detail-panel part5-picker-panel part5-collapsible-picker">
+<summary class="part5-detail-head">
+<h3>基金報告快速選取</h3>
+<span class="inline-status" id="part5ReportPickerStatus">載入後可點選；Ctrl / Cmd 可多選</span>
+</summary>
+<div class="part5-picker-content">
+<div class="table-wrap" id="part5ReportPickerTable"></div>
+</div>
+</details>
+<details class="part5-detail-panel part5-picker-panel part5-collapsible-picker">
+<summary class="part5-detail-head">
+<h3>Top 持股快速選取</h3>
+<span class="inline-status" id="part5TopHoldingPickerStatus">載入後可點選；Ctrl / Cmd 可多選</span>
+</summary>
+<div class="part5-picker-content">
+<div class="table-wrap" id="part5TopHoldingPickerTable"></div>
+</div>
+</details>
+</div>
+<div aria-hidden="true" class="part5-va-grid part5-drilldown-removed">
+<div class="part5-detail-panel">
+<div class="part5-detail-head">
+<h3>基金報告配置 Drill-down</h3>
+<span class="inline-status" id="part5ReportDetailStatus">尚未點選基金報告</span>
+</div>
+<div aria-hidden="true" class="table-wrap frontend-table-removed" id="part5ReportDetailTable"></div>
+<div class="chart part5-chart" id="part5ReportHoldingsChart"></div>
+<div aria-hidden="true" class="table-wrap frontend-table-removed" id="part5HoldingExplainTable"></div>
+</div>
+<div class="part5-detail-panel">
+<div class="part5-detail-head">
+<h3>Top 持股互動明細</h3>
+<span class="inline-status" id="part5TopHoldingStatus">尚未鎖定持股</span>
+</div>
+<div aria-hidden="true" class="table-wrap frontend-table-removed" id="part5TopHoldingDetailTable"></div>
+</div>
+</div>
+<div aria-hidden="true" class="table-wrap frontend-table-removed" id="part5SummaryTable"></div>
+<div aria-hidden="true" class="table-wrap frontend-table-removed" id="part5HoldingsTable"></div>
+</div>
+</section><section class="panel part5b-panel part5-subview-panel part5-subview-inactive" id="part5BWorkspace">
+<div class="section-head">
+<h2>Part 5B：Non-individual Holdings Exposure</h2>
+</div>
+<span aria-hidden="true" class="inline-status frontend-copy-removed" id="part5BStatus">Demo A/B/C：由 Part5 分析模式與上方 Part5 圖表框選自動連動</span>
+<div aria-hidden="true" class="part5-insight-cards frontend-copy-removed" id="part5BCaseCards"></div>
+<div class="part5b-chart-grid">
+<div class="chart part5-chart" id="part5BOverviewChart"></div>
+<div class="chart part5-chart" id="part5BYearChart"></div>
+<div class="chart part5-chart" id="part5BRateCaseChart"></div>
+<div class="chart part5-chart" id="part5BEquityCaseChart"></div>
+</div>
+<div aria-hidden="true" class="table-wrap frontend-table-removed" id="part5BTopItemsTable"></div>
+<div aria-hidden="true" class="table-wrap frontend-table-removed" id="part5BRemovedAuditTable"></div>
+</section></div><section class="panel part6-panel workspace-stage-card research-stage-panel workspace-stage-inactive part6-action-only-stage" id="part6Section">
+<div class="section-head">
+<h2>Part 6：真實持股動作與模型事件連結</h2>
+<div class="actions">
+<button id="runBackendAnalysisBtn" type="button">Run Backend Analysis</button>
+</div>
+</div>
+<div class="inline-status" id="part6Status">請先載入 Part1 基金月資料。系統使用事件前 3 年風格基準，並同時輸出未來 3、6、9、12 個月結果。</div>
+<div class="inline-status backend-status" id="backendAnalysisStatus">尚未送出 Part1–Part5 state。</div>
+<div class="control-grid part6-controls">
+<label class="control compact">
           顯示模式
           <select id="part6ModeSelect">
-            <option value="backend" selected>多天期預測</option>
-            <option value="shap">TreeSHAP 與聚類</option>
-          </select>
-        </label>
-        <label class="control compact">
+<option selected="" value="backend">多天期預測</option>
+<option value="shap">TreeSHAP 與聚類</option>
+</select>
+</label>
+<label class="control compact">
           歷史風格視窗
-          <select id="part6WindowSelect" disabled>
-            <option value="y3" selected>事件前 3 年（ex-ante）</option>
-          </select>
-        </label>
-        <label class="control compact">
+          <select disabled="" id="part6WindowSelect">
+<option selected="" value="y3">事件前 3 年（ex-ante）</option>
+</select>
+</label>
+<label class="control compact">
           解釋天期
           <select id="part6TargetSelect">
-            <option value="3">未來 3 個月</option>
-            <option value="6">未來 6 個月</option>
-            <option value="9">未來 9 個月</option>
-            <option value="12" selected>未來 12 個月</option>
-          </select>
-        </label>
-      </div>
-
-      <div id="part6FrontendContent" class="hidden"></div>
-      <div id="part6BackendContent" class="part6-backend-empty">
-        <div class="part6-backend-empty-window">按 Run Backend Analysis 後，系統會建立五層特徵、執行四天期雙階段預測，再回傳 TreeSHAP、時序聚類與逆向信度結果。</div>
-
-        <div class="part6-temporal-panel">
-          <div class="part6-temporal-head"><strong>事件期間</strong><span id="part6DateRangeLabel">等待資料範圍</span></div>
-          <div class="part6-dual-range">
-            <input id="part6DateStartRange" type="range" min="0" max="1" value="0" />
-            <input id="part6DateEndRange" type="range" min="0" max="1" value="1" />
-          </div>
-          <div class="part6-horizon-tabs" id="part6HorizonTabs">
-            <button type="button" data-horizon="3">3M</button><button type="button" data-horizon="6">6M</button>
-            <button type="button" data-horizon="9">9M</button><button type="button" data-horizon="12" class="active">12M</button>
-          </div>
-        </div>
-
-        <div class="metrics part6-backend-metrics">
-          <div><span>ML events</span><strong id="metricBackendPredictionCount">-</strong></div>
-          <div class="part6-positive-metric"><span>平均 positive score</span><strong id="metricBackendAvgProb">-</strong></div>
-          <div class="part6-negative-metric"><span>平均 negative score</span><strong id="metricBackendAvgNegativeProb">-</strong></div>
-          <div><span>預測 Up／Down／Neutral</span><strong id="metricBackendDirectionCounts">-</strong></div>
-          <div class="part6-positive-metric"><span>平均 E[excess｜positive]</span><strong id="metricBackendPositiveMagnitude">-</strong></div>
-          <div class="part6-negative-metric"><span>平均 E[excess｜negative]</span><strong id="metricBackendNegativeMagnitude">-</strong></div>
-          <div><span>平均 probability-weighted excess</span><strong id="metricBackendImpliedExcess">-</strong></div>
-          <div><span>Implied excess 負值事件</span><strong id="metricBackendNegativeImpliedCount">-</strong></div>
-        </div>
-        <div class="part6-direction-contract">
-          <strong>雙向模型主張</strong>
-          <span class="positive">藍色：P(positive) 與 E[excess｜positive]</span>
-          <span class="negative">紅色：P(negative) 與 E[excess｜negative]（保留負號）</span>
-          <span>黑色菱形／數值：P(+)×Magnitude(+) + P(−)×Magnitude(−)</span>
-        </div>
-        <div class="part6-reliability-panel">
-          <div class="section-head"><div><h3>Part6 模型穩定性與主張邊界</h3><p class="part6-method-note">模型分數是可失效的量化主張；必須連同 inner validation、未參與選模的 outer test、校準與特徵貢獻一起閱讀。</p></div></div>
-          <div id="part6ReliabilityCards" class="part6-reliability-grid"></div>
-          <div id="part6ClaimContract" class="part6-claim-contract"></div>
-          <div id="part6ReliabilityWarnings" class="inline-status"></div>
-        </div>
-
-        <div class="part6-expert-panel">
-          <div class="section-head">
-            <div>
-              <h3>平衡型基金專家 × AI 股債配置</h3>
-              <p class="part6-method-note">以同風格相對績效形成專家權重，再結合 AI 信心；不納入股票型基金 Copycat 策略。</p>
-            </div>
-          </div>
-          <div id="part6ExpertLatestCards" class="part6-anchor-cards"></div>
-          <div id="part6ExpertAllocationChart" class="chart part5-chart part6-wide-chart"></div>
-          <div id="part6ExpertRecommendationTable" class="table-wrap"></div>
-          <div id="part6ExpertManagerTable" class="table-wrap"></div>
-          <div id="part6ExpertCaveat" class="inline-status"></div>
-        </div>
-
-
-        <div id="part6AnchorContextCards" class="part6-anchor-cards"></div>
-        <div id="part6StyleEventChart" class="chart part5-chart part6-wide-chart part6-style-event-chart"></div>
-        <div id="part6StyleEventTable" class="table-wrap"></div>
-
-        <div class="part6-diagnostic-grid">
-          <div id="part6ClusterMap" class="chart part5-chart"></div>
-          <div id="part6ClusterSummary" class="table-wrap"></div>
-        </div>
-        <div class="part6-fidelity-panel">
-          <div class="section-head"><h3>逆向信度驗證</h3><span id="part6FidelityHint">點擊聚類氣泡查看</span></div>
-          <div class="part6-fidelity-grid">
-            <div id="part6FidelityShapChart" class="chart part5-chart"></div>
-            <div id="part6FidelityRawChart" class="chart part5-chart"></div>
-          </div>
-        </div>
-
-        <div class="part6-chart-grid backend-result-grid">
-          <div id="part6PredictionRankChart" class="chart part5-chart"></div>
-          <div id="part6ProbabilityHistogramChart" class="chart part5-chart"></div>
-          <div id="part6ShapFeatureChart" class="chart part5-chart part6-wide-chart"></div>
-          <div class="part6-wide-chart part6-shap-compare-panel">
-            <div class="part6-shap-picker-head">
-              <label class="control">SHAP events（可多選，最多 8 個）
-                <select id="part6ShapEventSelect" multiple size="6"></select>
-              </label>
-              <div class="actions">
-                <button id="part6SelectAllShapEventsBtn" type="button" class="secondary">選前 8 個</button>
-                <button id="part6ClearShapEventsBtn" type="button" class="secondary">只留第一個</button>
-              </div>
-            </div>
-            <div id="part6ShapSelectionHint" class="part6-method-note">等待 Part6 SHAP events。</div>
-            <div id="part6SingleEventShapChart" class="chart part5-chart part6-wide-chart"></div>
-          </div>
-        </div>
-
-        <div class="part6-action-panel">
-          <div class="section-head">
-            <div>
-              <h3>Part 5 真實持股新增／加碼／減碼明細</h3>
-              <p id="part6StockActionSummary" class="part6-method-note">等待 Part 5 選取事件。</p>
-            </div>
-          </div>
-          <div class="part6-action-chart-scroll">
-            <div id="part6StockActionChart" class="chart part5-chart part6-wide-chart part6-action-chart"></div>
-          </div>
-          <div id="part6StockActionTable" class="table-wrap"></div>
-        </div>
-
-        <div id="part6PredictionResultTable" class="table-wrap"></div>
-        <div id="part6ShapResultTable" class="table-wrap"></div>
-        <div id="backendAnalysisSummary" class="table-wrap"></div>
-      </div>
-    </section>
-
-
-    <section class="panel part7-panel" id="part7Section">
-      <div class="section-head">
-        <div>
-          <h2>Part 7：Evidence-Grounded LLM Critic</h2>
-          <p class="part7-subtitle">不重做預測；稽核 Part6 prediction / SHAP，並同時尋找支持證據、反證、結構轉折與資料限制。</p>
-        </div>
-        <div class="actions">
-          <button id="part7RunAnalysisBtn" type="button">Run Evidence Critic</button>
-        </div>
-      </div>
-      <div id="part7Status" class="inline-status">正在檢查 Part7 RAG 與 OpenAI API 狀態…</div>
-
-      <div class="part7-architecture-strip">
-        <div><strong>OpenAI API</strong><span>推理與原生 web search</span></div><div><strong>RAG</strong><span>同期總經＋個股／基金證據</span></div><div><strong>Pydantic schema</strong><span>限制輸出欄位與 verdict</span></div><div><strong>Human audit</strong><span>保留拒絕、反駁與追問權</span></div>
-      </div>
-
-      <div class="part7-control-grid">
-        <label class="control">Part6 events（可多選；預設跟隨 Part6 SHAP）
-          <select id="part7EventSelect" multiple size="6"><option value="">自動選擇最高機率事件</option></select>
-        </label>
-        <label class="control">解釋天期
+<option value="3">未來 3 個月</option>
+<option value="6">未來 6 個月</option>
+<option value="9">未來 9 個月</option>
+<option selected="" value="12">未來 12 個月</option>
+</select>
+</label>
+</div>
+<div class="hidden" id="part6FrontendContent"></div>
+<div class="part6-backend-empty" id="part6BackendContent">
+<div class="part6-backend-empty-window">按 Run Backend Analysis 後，系統會建立五層特徵、執行四天期雙階段預測，再回傳 TreeSHAP、時序聚類與逆向信度結果。</div>
+<div class="part6-temporal-panel">
+<div class="part6-temporal-head"><strong>事件期間</strong><span id="part6DateRangeLabel">等待資料範圍</span></div>
+<div class="part6-dual-range">
+<input id="part6DateStartRange" max="1" min="0" type="range" value="0"/>
+<input id="part6DateEndRange" max="1" min="0" type="range" value="1"/>
+</div>
+<div class="part6-horizon-tabs" id="part6HorizonTabs">
+<button data-horizon="3" type="button">3M</button><button data-horizon="6" type="button">6M</button>
+<button data-horizon="9" type="button">9M</button><button class="active" data-horizon="12" type="button">12M</button>
+</div>
+</div>
+<div class="metrics part6-backend-metrics">
+<div><span>ML events</span><strong id="metricBackendPredictionCount">-</strong></div>
+<div class="part6-positive-metric"><span>平均 positive score</span><strong id="metricBackendAvgProb">-</strong></div>
+<div class="part6-negative-metric"><span>平均 negative score</span><strong id="metricBackendAvgNegativeProb">-</strong></div>
+<div><span>預測 Up／Down／Neutral</span><strong id="metricBackendDirectionCounts">-</strong></div>
+<div class="part6-positive-metric"><span>平均 E[excess｜positive]</span><strong id="metricBackendPositiveMagnitude">-</strong></div>
+<div class="part6-negative-metric"><span>平均 E[excess｜negative]</span><strong id="metricBackendNegativeMagnitude">-</strong></div>
+<div><span>平均 probability-weighted excess</span><strong id="metricBackendImpliedExcess">-</strong></div>
+<div><span>Implied excess 負值事件</span><strong id="metricBackendNegativeImpliedCount">-</strong></div>
+</div>
+<div class="part6-direction-contract">
+<strong>雙向模型主張</strong>
+<span class="positive">藍色：P(positive) 與 E[excess｜positive]</span>
+<span class="negative">紅色：P(negative) 與 E[excess｜negative]（保留負號）</span>
+<span>黑色菱形／數值：P(+)×Magnitude(+) + P(−)×Magnitude(−)</span>
+</div>
+<div class="part6-reliability-panel">
+<div class="section-head"><div><h3>Part6 模型穩定性與主張邊界</h3><p class="part6-method-note">模型分數是可失效的量化主張；必須連同 inner validation、未參與選模的 outer test、校準與特徵貢獻一起閱讀。</p></div></div>
+<div class="part6-reliability-grid" id="part6ReliabilityCards"></div>
+<div class="part6-claim-contract" id="part6ClaimContract"></div>
+<div class="inline-status" id="part6ReliabilityWarnings"></div>
+</div>
+<div class="part6-expert-panel">
+<div class="section-head">
+<div>
+<h3>平衡型基金專家 × AI 股債配置</h3>
+<p class="part6-method-note">以同風格相對績效形成專家權重，再結合 AI 信心；不納入股票型基金 Copycat 策略。</p>
+</div>
+</div>
+<div class="part6-anchor-cards" id="part6ExpertLatestCards"></div>
+<div class="chart part5-chart part6-wide-chart" id="part6ExpertAllocationChart"></div>
+<div class="table-wrap" id="part6ExpertRecommendationTable"></div>
+<div class="table-wrap" id="part6ExpertManagerTable"></div>
+<div class="inline-status" id="part6ExpertCaveat"></div>
+</div>
+<div class="part6-anchor-cards" id="part6AnchorContextCards"></div>
+<div class="chart part5-chart part6-wide-chart part6-style-event-chart" id="part6StyleEventChart"></div>
+<div class="table-wrap" id="part6StyleEventTable"></div>
+<div class="part6-diagnostic-grid">
+<div class="chart part5-chart" id="part6ClusterMap"></div>
+<div class="table-wrap" id="part6ClusterSummary"></div>
+</div>
+<div class="part6-fidelity-panel">
+<div class="section-head"><h3>逆向信度驗證</h3><span id="part6FidelityHint">點擊聚類氣泡查看</span></div>
+<div class="part6-fidelity-grid">
+<div class="chart part5-chart" id="part6FidelityShapChart"></div>
+<div class="chart part5-chart" id="part6FidelityRawChart"></div>
+</div>
+</div>
+<div class="part6-chart-grid backend-result-grid">
+<div class="chart part5-chart" id="part6PredictionRankChart"></div>
+<div class="chart part5-chart" id="part6ProbabilityHistogramChart"></div>
+<div class="chart part5-chart part6-wide-chart" id="part6ShapFeatureChart"></div>
+<div class="part6-wide-chart part6-shap-compare-panel">
+<div class="part6-shap-picker-head">
+<label class="control">SHAP events（可多選，最多 8 個）
+                <select id="part6ShapEventSelect" multiple="" size="6"></select>
+</label>
+<div class="actions">
+<button class="secondary" id="part6SelectAllShapEventsBtn" type="button">選前 8 個</button>
+<button class="secondary" id="part6ClearShapEventsBtn" type="button">只留第一個</button>
+</div>
+</div>
+<div class="part6-method-note" id="part6ShapSelectionHint">等待 Part6 SHAP events。</div>
+<div class="chart part5-chart part6-wide-chart" id="part6SingleEventShapChart"></div>
+</div>
+</div>
+<div class="part6-action-panel">
+<div class="section-head">
+<div>
+<h3>Part 5 真實持股新增／加碼／減碼明細</h3>
+<p class="part6-method-note" id="part6StockActionSummary">等待 Part 5 選取事件。</p>
+</div>
+</div>
+<div class="part6-action-d3-panel"><div class="part6-action-d3-heading"><div><h3>D3｜Manager Action Fingerprint</h3><p>每位經理人的新增／加碼／減碼組成，並同時顯示淨持股權重變化。</p></div><div class="part6-action-d3-legend"><span class="new">新增</span><span class="inc">加碼</span><span class="dec">減碼</span><span class="net">◆ 淨權重變化</span></div></div><div aria-live="polite" class="part6-action-d3-summary" id="part6ActionD3Summary"></div></div><div class="part6-action-chart-scroll">
+<div class="chart part5-chart part6-wide-chart part6-action-chart" id="part6StockActionChart"></div>
+</div>
+<div class="table-wrap" id="part6StockActionTable"></div>
+</div>
+<div class="table-wrap" id="part6PredictionResultTable"></div>
+<div class="table-wrap" id="part6ShapResultTable"></div>
+<div class="table-wrap" id="backendAnalysisSummary"></div>
+</div>
+</section><section class="panel part7-panel workspace-stage-card research-stage-panel workspace-stage-inactive" id="part7Section">
+<div class="section-head">
+<div>
+<h2>Part 7：Evidence-Grounded LLM Critic</h2>
+<p class="part7-subtitle">不重做預測；稽核 Part6 prediction / SHAP，並同時尋找支持證據、反證、結構轉折與資料限制。</p>
+</div>
+<div class="actions">
+<button id="part7RunAnalysisBtn" type="button">Run Evidence Critic</button>
+</div>
+</div>
+<div class="inline-status" id="part7Status">正在檢查 Part7 RAG 與 OpenAI API 狀態…</div>
+<div class="part7-architecture-strip">
+<div><strong>OpenAI API</strong><span>推理與原生 web search</span></div><div><strong>RAG</strong><span>同期總經＋個股／基金證據</span></div><div><strong>Pydantic schema</strong><span>限制輸出欄位與 verdict</span></div><div><strong>Human audit</strong><span>保留拒絕、反駁與追問權</span></div>
+</div>
+<div class="part7-control-grid">
+<label class="control">Part6 events（可多選；預設跟隨 Part6 SHAP）
+          <select id="part7EventSelect" multiple="" size="6"><option value="">自動選擇最高機率事件</option></select>
+</label>
+<label class="control">解釋天期
           <select id="part7HorizonSelect">
-            <option value="3">3M</option><option value="6">6M</option><option value="9">9M</option><option value="12" selected>12M</option>
-          </select>
-        </label>
-        <label class="control">OpenAI model
-          <input id="part7ModelInput" value="gpt-5.6" autocomplete="off" />
-        </label>
-        <label class="control">Agent orchestration
-          <select id="part7OrchestrationSelect"><option value="auto" selected>Auto（優先 PydanticAI）</option><option value="pydantic_ai">PydanticAI</option><option value="openai_responses">OpenAI Responses</option></select>
-        </label>
-        <label class="control">Evidence scope
-          <select id="part7EvidenceScopeSelect"><option value="macro_and_micro" selected>總經＋個股／基金</option><option value="macro_only">只看總經／regime</option><option value="micro_only">只看個股／基金</option></select>
-        </label>
-        <label class="control">Ticker focus（逗號分隔）
-          <input id="part7TickerFocusInput" placeholder="例如 AAPL, MSFT" autocomplete="off" />
-        </label>
-        <label class="part7-check"><input id="part7WebSearchInput" type="checkbox" checked /> 同期 web search（新聞／FOMC／基金文本）</label>
-        <label class="part7-check"><input id="part7StrictTemporalInput" type="checkbox" checked /> 嚴格 point-in-time：不得用報告日後文件</label>
-        <label class="part7-check"><input id="part7CounterevidenceInput" type="checkbox" checked /> 強制尋找反證與替代解釋</label>
-      </div>
+<option value="3">3M</option><option value="6">6M</option><option value="9">9M</option><option selected="" value="12">12M</option>
+</select>
+</label>
+<label class="control">OpenAI model
+          <input autocomplete="off" id="part7ModelInput" value="gpt-5.6"/>
+</label>
+<label class="control">Agent orchestration
+          <select id="part7OrchestrationSelect"><option selected="" value="auto">Auto（優先 PydanticAI）</option><option value="pydantic_ai">PydanticAI</option><option value="openai_responses">OpenAI Responses</option></select>
+</label>
+<label class="control">Evidence scope
+          <select id="part7EvidenceScopeSelect"><option selected="" value="macro_and_micro">總經＋個股／基金</option><option value="macro_only">只看總經／regime</option><option value="micro_only">只看個股／基金</option></select>
+</label>
+<label class="control">Ticker focus（逗號分隔）
+          <input autocomplete="off" id="part7TickerFocusInput" placeholder="例如 AAPL, MSFT"/>
+</label>
+<label class="part7-check"><input checked="" id="part7WebSearchInput" type="checkbox"/> 同期 web search（新聞／FOMC／基金文本）</label>
+<label class="part7-check"><input checked="" id="part7StrictTemporalInput" type="checkbox"/> 嚴格 point-in-time：不得用報告日後文件</label>
+<label class="part7-check"><input checked="" id="part7CounterevidenceInput" type="checkbox"/> 強制尋找反證與替代解釋</label>
+</div>
+<label class="control part7-question">Critic 研究問題（選填）
+        <textarea id="part7QuestionInput" placeholder="例如：這次降低股票、提高債券配置的模型解釋，是否受到當時可得證據支持？有哪些反證？" rows="3"></textarea>
+</label>
+<div class="part7-runtime-grid" id="part7RuntimeCards"></div>
+<div class="part7-empty-window" id="part7ExplanationWorkspace">
+<p>即使尚未設定 API Key，也可按下按鈕檢查本地 RAG evidence IDs 與完整 prompt preview。</p>
+</div>
+</section></div></section>
 
-      <label class="control part7-question">Critic 研究問題（選填）
-        <textarea id="part7QuestionInput" rows="3" placeholder="例如：這次降低股票、提高債券配置的模型解釋，是否受到當時可得證據支持？有哪些反證？"></textarea>
-      </label>
 
-      <div id="part7RuntimeCards" class="part7-runtime-grid"></div>
-      <div id="part7ExplanationWorkspace" class="part7-empty-window">
-        <p>即使尚未設定 API Key，也可按下按鈕檢查本地 RAG evidence IDs 與完整 prompt preview。</p>
-      </div>
-    </section>
-  </main>
-
-  <script src="app.js?v=20260722-part6-bidirectional"></script>
+</main>
+<script src="app.js?v=20260724-stage-workspace"></script>
 </body>
 </html>

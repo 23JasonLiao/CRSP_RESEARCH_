@@ -19,6 +19,8 @@ if __name__ == "__main__":
     args = parse_args()
     print(
         f"Evidence-audit UI: http://{args.host}:{args.port} | "
+        f"Part1-Part7=single-stage navigation; Part5 includes holdings/exposure switch (visual-state-v2 unchanged) | "
+        f"Part5=Ctrl/Cmd multi-select + completed-bond display | "
         f"Part6=bidirectional probability + signed conditional magnitude | "
         f"Part7 API key={'configured' if os.getenv('OPENAI_API_KEY') else 'preview mode'}"
     )
